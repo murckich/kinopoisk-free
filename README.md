@@ -89,6 +89,28 @@
 
 ---
 
+## ⚙️ Быстрая настройка Tampermonkey
+
+### 1. Включите режим разработчика
+В вашем браузере откройте страницу расширений и активируйте переключатель «Режим разработчика»:
+
+[![Chrome](https://img.shields.io/badge/Chrome-Extensions-4285F4?logo=googlechrome&logoColor=white)](chrome://extensions)  
+[![Edge](https://img.shields.io/badge/Edge-Extensions-0078D7?logo=microsoftedge&logoColor=white)](edge://extensions)  
+[![Яндекс](https://img.shields.io/badge/Яндекс-Дополнения-FC3F1D?logo=yandex&logoColor=white)](browser://extensions)  
+[![Opera](https://img.shields.io/badge/Opera-Extensions-FF1B2D?logo=opera&logoColor=white)](opera://extensions)  
+
+> Нажмите на кнопку вашего браузера — страница откроется автоматически (работает, если README открыт в том же браузере).
+
+### 2. Разрешите Tampermonkey доступ к файлам
+На той же странице расширений нажмите **«Сведения»** **Подробнее** под Tampermonkey и включите:
+
+- **Разрешить доступ к URL-адресам файлов** **Разрешить пользовательские скрипты** 
+- Доступ к сайтам → **На всех сайтах**
+
+Готово! Возвращайтесь на Кинопоиск — кнопка «Смотреть» уже ждёт.
+
+---
+
 ## 📜 Лицензия
 
 Этот проект распространяется под лицензией **Apache License 2.0**. Подробнее см. в файле [LICENSE](https://github.com/murckich/kinopoisk-free/blob/main/LICENSE).
