@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Кинопоиск-free
+// @name         kinopoisk-free
 // @namespace    http://tampermonkey.net/
 // @version      7.3.9
 // @description  Бесплатный просмотр фильмом и сериалов на сайте Кинопоиск
