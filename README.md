@@ -40,32 +40,6 @@
 
 ---
 
-## 🛠 Установка
-
-Для работы расширения необходимо установить Tampermonkey для вашего браузера.
-
-### 1. Установите Tampermonkey
-
-Скачайте и установите расширение для вашего браузера с официального сайта:
-
-[![Установить Tampermonkey](https://img.shields.io/badge/Установить-Tampermonkey-2b5797?style=for-the-badge&logo=tampermonkey)](https://www.tampermonkey.net/index.php?locale=ru)
-
-### 2. Установите расширение
-
-Нажмите на кнопку ниже, чтобы установить последнюю стабильную версию расширения. Tampermonkey автоматически предложит вам установить его.
-
-[![Установить](https://img.shields.io/badge/Установить-Кинопоиск_[Free]-4CAF50?style=for-the-badge&logo=github)](https://raw.githubusercontent.com/murckich/kinopoisk-free/main/kinopoisk-free.user.js)
-
-> **Альтернативный способ:** Вы также можете скачать файл `kinopoisk-free.user.js` из этого репозитория и установить его вручную через панель Tampermonkey.
-
----
-
-## 🔄 Обновление
-
-Расширение настроено на автоматическое обновление. Как только мы выложим новую версию в этот репозиторий, Tampermonkey автоматически предложит Вам загрузить ее.
-
----
-
 ## 🎬 Демонстрация работы
 
 *Посмотрите, как работает расширение:*
@@ -86,6 +60,32 @@
 <img width="629" height="310" alt="{A03E589F-6171-48CF-8D25-DDCBBAF4A7F3}" src="https://github.com/user-attachments/assets/558658dd-b30e-4a68-99c5-2610ea44d271" />
 
 <img width="529" height="259" alt="{C095222D-88FE-4A2A-A131-3197C346F5FF}" src="https://github.com/user-attachments/assets/150ff721-a8a5-4d42-a9f3-802473e1aa10" />
+
+---
+
+## 🔄 Обновление
+
+Расширение настроено на автоматическое обновление. Как только мы выложим новую версию в этот репозиторий, Tampermonkey автоматически предложит Вам загрузить ее.
+
+---
+
+## 🛠 Установка
+
+Для работы расширения необходимо установить Tampermonkey для вашего браузера.
+
+### 1. Установите Tampermonkey
+
+Скачайте и установите расширение для вашего браузера с официального сайта:
+
+[![Установить Tampermonkey](https://img.shields.io/badge/Установить-Tampermonkey-2b5797?style=for-the-badge&logo=tampermonkey)](https://www.tampermonkey.net/index.php?locale=ru)
+
+### 2. Установите расширение
+
+Нажмите на кнопку ниже, чтобы установить последнюю стабильную версию расширения. Tampermonkey автоматически предложит вам установить его.
+
+[![Установить](https://img.shields.io/badge/Установить-Кинопоиск_[Free]-4CAF50?style=for-the-badge&logo=github)](https://raw.githubusercontent.com/murckich/kinopoisk-free/main/kinopoisk-free.user.js)
+
+> **Альтернативный способ:** Вы также можете скачать файл `kinopoisk-free.user.js` из этого репозитория и установить его вручную через панель Tampermonkey.
 
 ---
 
