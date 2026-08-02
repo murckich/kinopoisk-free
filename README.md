@@ -3,6 +3,7 @@
 [![Установить скрипт](https://img.shields.io/badge/Кинопоиск_[Free]-Download-brightgreen)](https://raw.githubusercontent.com/murckich/kinopoisk-free/main/kinopoisk-free.user.js)
 [![Tampermonkey](https://img.shields.io/badge/Tampermonkey-Supported-brightgreen)](https://www.tampermonkey.net/)
 [![GitHub license](https://img.shields.io/github/license/murckich/kinopoisk-free)](https://github.com/murckich/kinopoisk-free/blob/main/LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/murckich/kinopoisk-free?style=social)](https://github.com/murckich/kinopoisk-free/stargazers)
 
 **Бесплатный просмотр фильмов и сериалов на сайте Кинопоиск.**
 
