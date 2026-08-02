@@ -1,13 +1,31 @@
-# 🎬 Кинопоиск [Free]
+<p align="center">
+  <img src="images/icon-kp-bw-inv.svg" alt="Кинопоиск иконка" width="100">
+</p>
 
-[![Установить скрипт](https://img.shields.io/badge/Кинопоиск_[Free]-Download-brightgreen)](https://raw.githubusercontent.com/murckich/kinopoisk-free/main/kinopoisk-free.user.js)
-[![Tampermonkey](https://img.shields.io/badge/Tampermonkey-Supported-brightgreen)](https://www.tampermonkey.net/)
-[![GitHub license](https://img.shields.io/github/license/murckich/kinopoisk-free)](https://github.com/murckich/kinopoisk-free/blob/main/LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/murckich/kinopoisk-free?style=social)](https://github.com/murckich/kinopoisk-free/stargazers)
+<h1 align="center">Кинопоиск [free]</h1>
 
-**Бесплатный просмотр фильмов и сериалов на сайте Кинопоиск.**
+<p align="center">
+  <a href="https://raw.githubusercontent.com/murckich/kinopoisk-free/main/kinopoisk-free.user.js">
+    <img src="https://img.shields.io/badge/Кинопоиск_[Free]-Download-brightgreen" alt="Скачать скрипт">
+  </a>
+  <a href="https://www.tampermonkey.net/">
+    <img src="https://img.shields.io/badge/Tampermonkey-Supported-brightgreen" alt="Tampermonkey Supported">
+  </a>
+  <a href="https://github.com/murckich/kinopoisk-free/blob/main/LICENSE">
+    <img src="https://img.shields.io/github/license/murckich/kinopoisk-free" alt="License">
+  </a>
+  <a href="https://github.com/murckich/kinopoisk-free/stargazers">
+    <img src="https://img.shields.io/github/stars/murckich/kinopoisk-free?style=social" alt="GitHub stars">
+  </a>
+</p>
 
-Это расширение для [Tampermonkey](https://www.tampermonkey.net/) открывает доступ к просмотру контента на Kinopoisk.ru без ограничений и подписок.
+<p align="center">
+  <b>Бесплатный просмотр фильмов и сериалов на сайте Кинопоиск.</b>
+</p>
+
+<p align="center">
+  Это расширение для <a href="https://www.tampermonkey.net/">Tampermonkey</a> открывает доступ к просмотру контента на Kinopoisk.ru без ограничений и подписок.
+</p>
 
 ---
 
