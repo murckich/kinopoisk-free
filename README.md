@@ -43,3 +43,43 @@
 ## 🔄 Обновление
 
 Скрипт настроен на автоматическое обновление. Как только вы выложите новую версию в этот репозиторий, Tampermonkey уведомит всех пользователей о доступном обновлении.
+
+---
+
+## 🖼 Скриншоты
+
+<img width="1278" height="1007" alt="{C4D69048-627B-4203-BADB-3005FBD1F870}" src="https://github.com/user-attachments/assets/cd7a611c-730c-494b-b132-7d8457636f09" />
+
+<img width="529" height="259" alt="{C095222D-88FE-4A2A-A131-3197C346F5FF}" src="https://github.com/user-attachments/assets/150ff721-a8a5-4d42-a9f3-802473e1aa10" />
+
+<img width="629" height="310" alt="{A03E589F-6171-48CF-8D25-DDCBBAF4A7F3}" src="https://github.com/user-attachments/assets/558658dd-b30e-4a68-99c5-2610ea44d271" />
+
+<img width="1044" height="998" alt="{94791D45-4375-4A95-8673-2537EEF8A630}" src="https://github.com/user-attachments/assets/e31bc34e-dd0f-445c-a6f4-8a6094a17f08" />
+
+---
+
+## 📜 Лицензия
+
+Этот проект распространяется под лицензией **Apache License 2.0**. Подробнее см. в файле [LICENSE](https://github.com/murckich/kinopoisk-free/blob/main/LICENSE).
+
+Copyright 2026 Nyanta
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+---
+
+## 🙏 Благодарности
+
+Спасибо всем, кто пользуется и поддерживает проект! Ваши отзывы и предложения помогают делать его лучше.
+Если вам понравился скрипт, не забудьте поставить ⭐ звезду на GitHub, чтобы поддержать разработку!
+[![GitHub stars](https://img.shields.io/github/stars/murckich/kinopoisk-free?style=social)](https://github.com/murckich/kinopoisk-free/stargazers)
