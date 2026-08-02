@@ -23,6 +23,8 @@
 // @match        https://*.fbfind.top/*
 // @match        https://villybizy.online/*
 // @match        https://*.villybizy.online/*
+// @downloadURL  https://raw.githubusercontent.com/murckich/kinopoisk-free/main/kinopoisk-free.user.js
+// @updateURL    https://raw.githubusercontent.com/murckich/kinopoisk-free/main/kinopoisk-free.user.js
 // @grant        none
 // @run-at       document-start
 // @license      Apache-2.0
