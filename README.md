@@ -89,10 +89,11 @@
 
 ---
 
-## ⚙️ Быстрая настройка Tampermonkey
+## ⚙️ Быстрая настройка [Tampermonkey](https://www.tampermonkey.net/index.php?locale=ru)
 
 ### 1. Включите режим разработчика
-В вашем браузере откройте страницу расширений и активируйте переключатель «Режим разработчика»:
+В вашем браузере откройте страницу расширений и активируйте переключатель «Режим разработчика»:  
+<img width="169" height="22" alt="{DF7B2EF3-4C2E-4806-83D2-CD0966837C6F}" src="https://github.com/user-attachments/assets/ce9c0b0a-a86f-437f-82b2-3d5021a75f11" />  
 
 [![Chrome](https://img.shields.io/badge/Chrome-Настройки-4285F4?logo=googlechrome&logoColor=white)](chrome://extensions)  
 [![Opera](https://img.shields.io/badge/Opera-Настройки-FF1B2D?logo=opera&logoColor=white)](opera://extensions)  
@@ -101,13 +102,13 @@
 
 > Нажмите на кнопку вашего браузера — страница откроется автоматически.
 
-### 2. Разрешите Tampermonkey доступ к файлам
+### 2. Разрешите [Tampermonkey](https://www.tampermonkey.net/index.php?locale=ru) доступ к файлам
 На той же странице расширений нажмите **«Сведения»** или **«Подробнее»** под Tampermonkey и включите:
 
 - **«Разрешить доступ к URL-адресам файлов»** или **«Разрешить пользовательские скрипты»** 
 - Доступ к сайтам → **На всех сайтах**
 
-Готово! Возвращайтесь на Кинопоиск — кнопка «Смотреть» уже ждёт.
+Готово! Возвращайтесь на [Кинопоиск](https://www.kinopoisk.ru/) — кнопка «Смотреть» уже ждёт.
 
 ---
 
