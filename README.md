@@ -34,7 +34,7 @@
 
 Нажмите на кнопку ниже, чтобы установить последнюю стабильную версию расширения. Tampermonkey автоматически предложит вам установить его.
 
-[![Установить](https://img.shields.io/badge/Установить_расширение-Кинопоиск_[Free]-4CAF50?style=for-the-badge&logo=github)](https://raw.githubusercontent.com/murckich/kinopoisk-free/main/kinopoisk-free.user.js)
+[![Установить](https://img.shields.io/badge/Установить-Кинопоиск_[Free]-4CAF50?style=for-the-badge&logo=github)](https://raw.githubusercontent.com/murckich/kinopoisk-free/main/kinopoisk-free.user.js)
 
 > **Альтернативный способ:** Вы также можете скачать файл `kinopoisk-free.user.js` из этого репозитория и установить его вручную через панель Tampermonkey.
 
