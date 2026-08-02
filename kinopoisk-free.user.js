@@ -2,7 +2,7 @@
 // @name         kinopoisk-free
 // @namespace    http://tampermonkey.net/
 // @version      7.3.9
-// @description  Бесплатный просмотр фильмом и сериалов на сайте Кинопоиск
+// @description  Бесплатный просмотр фильмом и сериалов на сайте kinopoisk.ru
 // @author       Nyanta
 // @icon         https://www.kinopoisk.ru/favicon.ico
 // @match        https://www.kinopoisk.ru/*
