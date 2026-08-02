@@ -2,7 +2,7 @@
   <img src="images/icon-kp-bw-inv.svg" alt="Кинопоиск иконка" width="200">
 </p>
 
-<h1 align="center">Кинопоиск [free]</h1>
+<h1 align="center">Кинопоиск [Free]</h1>
 
 <p align="center">
   <a href="https://raw.githubusercontent.com/murckich/kinopoisk-free/main/kinopoisk-free.user.js">
