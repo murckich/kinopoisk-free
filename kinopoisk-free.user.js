@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kinopoisk-free
 // @namespace    http://tampermonkey.net/
-// @version      7.4.0
+// @version      7.4.1
 // @description  Бесплатный просмотр фильмом и сериалов на сайте kinopoisk.ru
 // @author       Nyanta
 // @icon         https://www.kinopoisk.ru/favicon.ico
@@ -50,22 +50,23 @@
     'use strict';
 
     // ═══════════════════════════════════════════════════════════════
-    // КОНФИГУРАЦИЯ – изменяйте здесь внешний вид и поведение
+    // КОНФИГУРАЦИЯ
     // ═══════════════════════════════════════════════════════════════
     const CONFIG = {
-        STORAGE_KEY: 'kpRedirectSettings',   // ключ localStorage для настроек
-        DEFAULT_DOMAIN: 'habster.sbs',       // канал по умолчанию
-        CHANNELS: [                          // список каналов-зеркал
+        STORAGE_KEY: 'kpRedirectSettings',
+        DEFAULT_DOMAIN: 'habster.sbs',
+        CHANNELS: [
             { domain: 'habster.sbs',    name: 'Альфа' },
-            { domain: 'kinopoisk.ws',   name: 'Браво' },
+            // Временно скрыто: Браво (kinopoisk.ws) не работает — раскомментировать, когда заработает
+            // { domain: 'kinopoisk.ws',   name: 'Браво' },
             { domain: 'kinopoisk.film', name: 'Гамма' },
             { domain: 'kinokino.vip',   name: 'Дельта' },
             { domain: 'flcksbr.top',    name: 'Танго' },
             { domain: 'sspoisk.ru',     name: 'Чарли' }
         ],
-        BTN_SIZE: 52,                // диаметр основной кнопки ▶ (px)
-        SETTINGS_BTN_SIZE: 36,       // диаметр кнопок ⚙️ и 📑 (px)
-        POSITIONS: {                 // варианты позиций фиксированных кнопок
+        BTN_SIZE: 52,
+        SETTINGS_BTN_SIZE: 36,
+        POSITIONS: {
             'left-top':      { left: true,  vertical: 'top',    arrow: '🢄' },
             'left-middle':   { left: true,  vertical: 'middle', arrow: '🢀' },
             'left-bottom':   { left: true,  vertical: 'bottom', arrow: '🢇' },
@@ -73,24 +74,23 @@
             'right-middle':  { left: false, vertical: 'middle', arrow: '🢂' },
             'right-bottom':  { left: false, vertical: 'bottom', arrow: '🢆' }
         },
-        EMBED_SELECTOR: '.styles_buttonsContainer__DCKJk', // контейнер для встроенных кнопок
+        EMBED_SELECTOR: '.styles_buttonsContainer__DCKJk',
         FALLBACK_SELECTORS: [
             '.film-header__buttons',
             '[class*="buttonsContainer"]',
             '[class*="Buttons_container"]'
         ],
-        HOVER_BG: '#e5e5e5',           // фон кнопок при наведении
-        HOVER_TEXT_COLOR: '#1a1a1a',   // цвет текста/иконок при наведении
-        EMBED_IDLE_BG: '#f2f2f2',      // фон кнопок в покое (встроенный режим)
-        EMBED_MAIN_COLOR: '#1a1a1a',   // цвет иконки ▶ (встроенный)
-        EMBED_SETTINGS_COLOR: '#1a1a1a', // цвет иконок ⚙️/📑 (встроенный)
-        FIXED_TOP_COLOR: '#f0f0f5',    // цвет иконки ▶ для позиций сверху
+        HOVER_BG: '#e5e5e5',
+        HOVER_TEXT_COLOR: '#1a1a1a',
+        EMBED_IDLE_BG: '#f2f2f2',
+        EMBED_MAIN_COLOR: '#1a1a1a',
+        EMBED_SETTINGS_COLOR: '#1a1a1a',
+        FIXED_TOP_COLOR: '#f0f0f5',
         FIXED_TOP_IDLE_BG: 'transparent',
         FIXED_MID_BOTTOM_IDLE_BG: '#f2f2f2',
         FIXED_MID_BOTTOM_COLOR: '#1a1a1a',
         FIXED_SETTINGS_COLOR_TOP: '#f0f0f5',
         FIXED_SETTINGS_COLOR_MID_BOT: '#1a1a1a',
-        // Параметры панели настроек
         PANEL_BG: 'rgba(245, 245, 245, 0.28)',
         PANEL_BLUR: '24px',
         PANEL_RADIUS: '20px',
@@ -101,10 +101,10 @@
         PANEL_OFFSET_X: 8,
         PANEL_MIN_WIDTH: '160px',
         PANEL_FONT_SIZE: '13px',
-        EMBED_TIMEOUT: 5000,         // через сколько мс переключиться на fixed-режим, если контейнер не найден
+        EMBED_TIMEOUT: 5000,
         KP_HOME_URL: 'https://www.kinopoisk.ru',
-        BUTTONS_GAP: '6px',          // расстояние между кнопками и до панелей
-        SAVED_STORAGE_KEY: 'kpSavedMovies'  // ключ localStorage для закладок
+        BUTTONS_GAP: '6px',
+        SAVED_STORAGE_KEY: 'kpSavedMovies'
     };
 
     // ═══════════════════════════════════════════════════════════════
@@ -115,7 +115,27 @@
                             CONFIG.CHANNELS.some(c => host.includes(c.domain));
     const isBlockedPage = window.location.pathname === '/blocked.html';
 
-    // ---------- Самый ранний фон ДЛЯ ВСЕХ ЗЕРКАЛ (уменьшение мерцания) ----------
+    // ---------- Улучшенное раннее скрытие ----------
+    if (isRebuildMirror || isBlockedPage) {
+        const hideStyle = document.createElement('style');
+        hideStyle.id = 'kp-hide-body-early';
+        hideStyle.textContent = 'body { visibility: hidden !important; }';
+        if (document.head) {
+            document.head.insertBefore(hideStyle, document.head.firstChild);
+        } else {
+            const headObserver = new MutationObserver(() => {
+                if (document.head) {
+                    headObserver.disconnect();
+                    document.head.insertBefore(hideStyle, document.head.firstChild);
+                }
+            });
+            headObserver.observe(document.documentElement, { childList: true });
+        }
+        document.documentElement.style.visibility = 'hidden';
+        document.documentElement.style.background = '#0b0d14';
+    }
+
+    // ---------- Ранний фон ----------
     if (isRebuildMirror) {
         const style = document.createElement('style');
         style.id = 'kp-base-bg-mirror';
@@ -133,7 +153,6 @@
         }
     }
 
-    // ---------- Самый ранний фон для blocked-страниц ----------
     if (isBlockedPage) {
         const style = document.createElement('style');
         style.id = 'kp-base-bg';
@@ -151,13 +170,7 @@
         }
     }
 
-    // ---------- Мгновенное глобальное скрытие ----------
-    if (isRebuildMirror || isBlockedPage) {
-        document.documentElement.style.visibility = 'hidden';
-        document.documentElement.style.background = '#0b0d14';
-    }
-
-    // ---------- Ранняя очистка + надёжная блокировка tgMain ----------
+    // ---------- Ранняя очистка ----------
     function injectEarlyCleanCSS() {
         const host = window.location.hostname;
         let css = '';
@@ -191,7 +204,6 @@
             }
         }
 
-        // Дополнительный MutationObserver для мгновенного скрытия tgMain
         if (isRebuildMirror) {
             const hideTgMain = () => {
                 const el = document.getElementById('tgMain');
@@ -214,6 +226,8 @@
 
     function showBody() {
         document.documentElement.style.visibility = '';
+        const earlyHide = document.getElementById('kp-hide-body-early');
+        if (earlyHide) earlyHide.remove();
         const baseBg = document.getElementById('kp-base-bg-mirror');
         if (baseBg) baseBg.remove();
         const baseBgBlocked = document.getElementById('kp-base-bg');
@@ -234,7 +248,7 @@
     }
     releaseBodyForSimpleMirrors();
 
-    // ---------- Стили для Gamma/Delta/Charlie/Tango ----------
+    // ---------- Стили ----------
     const ALFA_STYLES_GAMMA_TANGO = `
         :root {
             --bg: #0b0d14;
@@ -1001,7 +1015,6 @@
             playerTopBar.appendChild(torrentBtn);
         }
 
-        // ── Заполнение названия и года на Браво ──
         const movie = getMovieInfo();
         if (movie) {
             const titleEl = container.querySelector('.movie-title');
@@ -1019,7 +1032,7 @@
     function waitForRebuild() {
         const type = getMirrorTypeForRebuild();
         if (type === 'bravo') {
-            if (!/^\/\d+$/.test(window.location.pathname)) {
+            if (!/^\/\d+/.test(window.location.pathname)) {
                 showBody();
                 return;
             }
@@ -1060,7 +1073,7 @@
         }
 
         let attempts = 0;
-        const maxAttempts = 30;
+        const maxAttempts = 60;
         const interval = setInterval(() => {
             let iframeContainer, menuItems;
             if (type === 'gamma') {
@@ -1075,9 +1088,39 @@
                 rebuildMirror();
             } else if (++attempts >= maxAttempts) {
                 clearInterval(interval);
-                showBody();
+                startPersistentObserver(type);
             }
         }, 200);
+    }
+
+    function startPersistentObserver(type) {
+        const observer = new MutationObserver(() => {
+            let iframeContainer, menuItems;
+            if (type === 'gamma') {
+                iframeContainer = document.querySelector('.kinobox_iframe_container');
+                menuItems = document.querySelectorAll('.kinobox_menu li');
+            } else {
+                iframeContainer = document.querySelector('.kinobox__iframeWrapper');
+                menuItems = document.querySelectorAll('.kinobox__menuItem');
+            }
+            if (iframeContainer && menuItems.length > 0) {
+                observer.disconnect();
+                rebuildMirror();
+            }
+        });
+        observer.observe(document.documentElement, { childList: true, subtree: true });
+        let iframeContainer, menuItems;
+        if (type === 'gamma') {
+            iframeContainer = document.querySelector('.kinobox_iframe_container');
+            menuItems = document.querySelectorAll('.kinobox_menu li');
+        } else {
+            iframeContainer = document.querySelector('.kinobox__iframeWrapper');
+            menuItems = document.querySelectorAll('.kinobox__menuItem');
+        }
+        if (iframeContainer && menuItems.length > 0) {
+            observer.disconnect();
+            rebuildMirror();
+        }
     }
 
     // ---------- UI Кинопоиска ----------
@@ -1210,7 +1253,6 @@
             else window.location.href = newUrl;
         });
 
-        // Settings wrapper + btn
         const settingsWrapper = document.createElement('div');
         settingsWrapper.style.cssText = 'position: relative; display: inline-flex; align-items: center;';
         const settingsBtn = createButton('⚙️', 'kp-settings-btn', CONFIG.SETTINGS_BTN_SIZE, CONFIG.EMBED_SETTINGS_COLOR, CONFIG.EMBED_IDLE_BG, CONFIG.HOVER_BG, CONFIG.HOVER_TEXT_COLOR);
@@ -1227,11 +1269,10 @@
         settingsWrapper.appendChild(settingsBtn);
         settingsWrapper.appendChild(settingsPanel);
 
-        // Saved wrapper + btn
         const savedWrapper = document.createElement('div');
         savedWrapper.style.cssText = 'position: relative; display: inline-flex; align-items: center;';
         const saveBtn = createButton('📑', 'kp-save-btn', CONFIG.SETTINGS_BTN_SIZE, CONFIG.EMBED_SETTINGS_COLOR, CONFIG.EMBED_IDLE_BG, CONFIG.HOVER_BG, CONFIG.HOVER_TEXT_COLOR);
-        saveBtn.title = 'Сохраненные';
+        saveBtn.title = 'Закладки';
         saveBtn.style.opacity = '0';
         saveBtn.style.pointerEvents = 'none';
         saveBtn.style.transform = 'scale(0.5)';
@@ -1244,7 +1285,6 @@
         savedWrapper.appendChild(saveBtn);
         savedWrapper.appendChild(savedPanel);
 
-        // Hover effects
         group.addEventListener('mouseenter', () => {
             settingsBtn.style.opacity = '1'; settingsBtn.style.pointerEvents = 'auto'; settingsBtn.style.transform = 'scale(1)';
             saveBtn.style.opacity = '1'; saveBtn.style.pointerEvents = 'auto'; saveBtn.style.transform = 'scale(1)';
@@ -1254,7 +1294,6 @@
             saveBtn.style.opacity = '0'; saveBtn.style.pointerEvents = 'none'; saveBtn.style.transform = 'scale(0.5)';
         });
 
-        // Click handlers with mutual closing
         settingsBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             if (settingsPanel.style.display === 'flex') {
@@ -1336,7 +1375,6 @@
             else window.location.href = newUrl;
         });
 
-        // Settings
         const settingsWrapper = document.createElement('div');
         settingsWrapper.style.cssText = 'position: relative; display: inline-flex; align-items: center;';
         const settingsColor = isTop ? CONFIG.FIXED_SETTINGS_COLOR_TOP : CONFIG.FIXED_SETTINGS_COLOR_MID_BOT;
@@ -1357,11 +1395,10 @@
         settingsWrapper.appendChild(settingsBtn);
         settingsWrapper.appendChild(settingsPanel);
 
-        // Saved
         const savedWrapper = document.createElement('div');
         savedWrapper.style.cssText = 'position: relative; display: inline-flex; align-items: center;';
         const saveBtn = createButton('📑', 'kp-save-btn', CONFIG.SETTINGS_BTN_SIZE, settingsColor, settingsIdleBg, CONFIG.HOVER_BG, CONFIG.HOVER_TEXT_COLOR);
-        saveBtn.title = 'Сохраненные';
+        saveBtn.title = 'Закладки';
         saveBtn.style.opacity = '0';
         saveBtn.style.pointerEvents = 'none';
         saveBtn.style.transform = 'scale(0.5)';
@@ -1385,7 +1422,6 @@
             saveBtn.style.opacity = '0'; saveBtn.style.pointerEvents = 'none'; saveBtn.style.transform = 'scale(0.5)';
         });
 
-        // Позиционирование для fixed
         function positionFixedPanel(panel, anchorBtn) {
             const vert = settings.btnVertical;
             const horiz = settings.btnPosition;
@@ -1666,7 +1702,7 @@
         header.style.cssText = 'flex-shrink: 0; background: #f5f5f5; padding: 6px 10px 4px; border-bottom: 1px solid rgba(0,0,0,0.1);';
         header.innerHTML = `
             <div style="display:flex; justify-content:space-between; align-items:center;">
-                <span style="font-weight:600; font-size:15px;">Сохраненные</span>
+                <span style="font-weight:600; font-size:12px;">Закладки <span id="kp-saved-count"></span></span>
                 <button id="kp-save-current-btn" style="
                     background:#427552; border:none; color:#fff; padding:3px 10px;
                     border-radius:20px; font-size:12px; cursor:pointer; font-weight:600;">
@@ -1740,6 +1776,10 @@
     function renderSavedMovies(panel) {
         const list = panel.querySelector('#kp-saved-list');
         const movies = getSavedMovies();
+        const countSpan = panel.querySelector('#kp-saved-count');
+        if (countSpan) {
+            countSpan.textContent = movies.length > 0 ? `(${movies.length})` : '';
+        }
         list.innerHTML = '';
 
         if (movies.length === 0) {
