@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kinopoisk-free
 // @namespace    http://tampermonkey.net/
-// @version      7.4.1
+// @version      7.4.2
 // @description  Бесплатный просмотр фильмом и сериалов на сайте kinopoisk.ru
 // @author       Nyanta
 // @icon         https://www.kinopoisk.ru/favicon.ico
@@ -10,7 +10,7 @@
 // @match        https://kinopoisk.ru/*
 // @match        http://kinopoisk.ru/*
 // @match        https://habster.sbs/*
-// @match        https://kinopoisk.ws/*
+// @match        https://www.kinopoisk.ws/*
 // @match        https://kinopoisk.film/*
 // @match        https://kinokino.vip/*
 // @match        https://flcksbr.top/*
@@ -23,6 +23,8 @@
 // @match        https://*.fbfind.top/*
 // @match        https://villybizy.online/*
 // @match        https://*.villybizy.online/*
+// @match        https://troutcdn.site/*
+// @match        https://*.troutcdn.site/*
 // @downloadURL  https://raw.githubusercontent.com/murckich/kinopoisk-free/main/kinopoisk-free.user.js
 // @updateURL    https://raw.githubusercontent.com/murckich/kinopoisk-free/main/kinopoisk-free.user.js
 // @grant        none
@@ -57,8 +59,7 @@
         DEFAULT_DOMAIN: 'habster.sbs',
         CHANNELS: [
             { domain: 'habster.sbs',    name: 'Альфа' },
-            // Временно скрыто: Браво (kinopoisk.ws) не работает — раскомментировать, когда заработает
-            // { domain: 'kinopoisk.ws',   name: 'Браво' },
+            { domain: 'www.kinopoisk.ws',   name: 'Браво' },
             { domain: 'kinopoisk.film', name: 'Гамма' },
             { domain: 'kinokino.vip',   name: 'Дельта' },
             { domain: 'flcksbr.top',    name: 'Танго' },
@@ -111,7 +112,7 @@
     // ОПРЕДЕЛЕНИЯ ТИПА СТРАНИЦЫ
     // ═══════════════════════════════════════════════════════════════
     const host = window.location.hostname;
-    const isRebuildMirror = host.match(/(fbfind\.(life|top)|villybizy\.online|flcksbr\.top|nonchik\.com)/) ||
+    const isRebuildMirror = host.match(/(fbfind\.(life|top)|villybizy\.online|flcksbr\.top|nonchik\.com|troutcdn\.site)/) ||
                             CONFIG.CHANNELS.some(c => host.includes(c.domain));
     const isBlockedPage = window.location.pathname === '/blocked.html';
 
@@ -177,7 +178,7 @@
 
         if (host.match(/(fbfind\.(life|top)|villybizy\.online|flcksbr\.top)/)) {
             css = `#tgWrapper, .brand, .topAdPad, #TopAdMb, .adDown, #instructionModal, #tgMain, img[src*="tgimg.png"]{display:none!important}`;
-        } else if (host.match(/nonchik\.com/)) {
+        } else if (host.match(/nonchik\.com|kinopoisk\.ws|troutcdn\.site/)) {
             css = `.site-header,.social,.footer,.disclaimer,.spacer-md,#movie_video,#name,.h2{display:none!important}`;
         } else if (CONFIG.CHANNELS.some(c => host.includes(c.domain))) {
             css = `.header,.tg-banner,#unreleased-notice,ins,.share-bar,.footer,.info-tabs-bar,#panel-comments,.cw,#rkn-stub,#tgMain,img[src*="tgimg.png"]{display:none!important}`;
@@ -239,7 +240,7 @@
     function releaseBodyForSimpleMirrors() {
         if (isBlockedPage) return;
         const host = window.location.hostname;
-        if (!host.match(/(fbfind|nonchik|villybizy|flcksbr)/) && CONFIG.CHANNELS.some(c => host.includes(c.domain))) {
+        if (!host.match(/(fbfind|nonchik|villybizy|flcksbr|troutcdn)/) && CONFIG.CHANNELS.some(c => host.includes(c.domain))) {
             window.addEventListener('load', () => {
                 setTimeout(showBody, 50);
             });
@@ -248,7 +249,7 @@
     }
     releaseBodyForSimpleMirrors();
 
-    // ---------- Стили ----------
+    // ---------- Единый стиль для всех каналов (включая Браво) ----------
     const ALFA_STYLES_GAMMA_TANGO = `
         :root {
             --bg: #0b0d14;
@@ -403,55 +404,8 @@
         }
         .kinobox_loader, .kinobox_menu_button, .kbt_select, .kbt_button,
         .kinobox__loaderWrapper, .kinobox__loader { display: none !important; }
-    `;
 
-    const BRAVO_STYLES = `
-        :root {
-            --bg: #0b0d14;
-            --bg-card: #131620;
-            --bg-elev: #1a1e2e;
-            --accent: #818cf8;
-            --accent-g: rgba(99,102,241,0.18);
-            --text: #e2e8f0;
-            --muted: #94a3b8;
-            --dim: #64748b;
-            --border: #1e2235;
-            --radius: 14px;
-            --gold: #fbbf24;
-        }
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        html, body {
-            background: var(--bg) !important;
-            color: var(--text);
-            font-family: system-ui, sans-serif;
-            overflow-y: auto;
-            margin: 0;
-        }
-        body::before {
-            content: '';
-            position: fixed; inset: 0;
-            background-image: radial-gradient(circle at 1px 1px, rgba(99,102,241,0.05) 1px, transparent 0);
-            background-size: 30px 30px;
-            pointer-events: none; z-index: 0;
-        }
-        #kp-alfa-page {
-            position: relative; z-index: 1;
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 1.25rem;
-        }
-        .player-section {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 18px;
-            margin-bottom: 1.25rem;
-        }
-        .player-top-bar {
-            display: flex; align-items: center;
-            padding: 0.75rem 0.85rem 0;
-            position: relative; z-index: 10;
-            gap: 1rem;
-        }
+        /* Кнопка торрентов в стиле остальных каналов */
         .kp-torrent-btn {
             display: inline-flex; align-items: center;
             padding: 0.42rem 0.85rem;
@@ -468,58 +422,6 @@
             background: rgba(99,102,241,0.1);
             border-color: rgba(99,102,241,0.3);
             color: var(--text);
-        }
-
-        .vpn-warning {
-            font-size: 0.75rem; color: var(--dim);
-            display: flex; align-items: center; gap: 0.3rem;
-            padding: 0.45rem 0.75rem 0.6rem;
-        }
-        .player-wrap {
-            position: relative;
-            padding-top: 56.25%;
-            margin: 0.75rem;
-            border-radius: 0 0 14px 14px;
-            overflow: hidden;
-            z-index: 1;
-        }
-        #film iframe {
-            position: absolute; inset: 0;
-            width: 100%; height: 100%;
-            border: none; border-radius: 12px;
-            background: #000;
-        }
-
-        .movie-info {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 18px;
-            padding: 1.5rem;
-            margin-bottom: 1rem;
-        }
-        .movie-info-inner { display: flex; gap: 1.5rem; }
-        @media (max-width: 600px) { .movie-info-inner { flex-direction: column; } }
-        .movie-poster-wrap { flex-shrink: 0; width: 130px; }
-        .movie-poster-img { width: 100%; border-radius: 10px; display: block; background: var(--bg-elev); }
-        .movie-details { flex: 1; min-width: 0; }
-        .movie-title { font-size: 1.5rem; font-weight: 700; margin-bottom: 0.2rem; line-height: 1.25; }
-        .movie-orig { font-size: 0.9rem; color: var(--muted); margin-bottom: 0.9rem; }
-        .movie-meta { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
-        .meta-tag {
-            font-size: 0.78rem; padding: 0.22rem 0.65rem;
-            background: var(--bg-elev); border: 1px solid var(--border);
-            border-radius: 20px; color: var(--muted);
-        }
-        .meta-tag.gold { color: var(--gold); border-color: rgba(251,191,36,0.3); background: rgba(251,191,36,0.08); }
-        .meta-tag.kp   { color: var(--accent); border-color: rgba(99,102,241,0.3); background: var(--accent-g); }
-        .movie-rows { display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: 1rem; }
-        .movie-row  { font-size: 0.85rem; }
-        .movie-row-label { color: var(--dim); }
-        .movie-row-val   { color: var(--text); }
-        .movie-desc {
-            font-size: 0.88rem; color: var(--muted);
-            line-height: 1.65; border-top: 1px solid var(--border);
-            padding-top: 0.9rem; margin-top: 0.5rem;
         }
     `;
 
@@ -767,7 +669,7 @@
     function getMirrorTypeForRebuild() {
         const host = window.location.hostname;
         if (host.includes('flcksbr.top')) return 'tango';
-        if (host.includes('nonchik.com')) return 'bravo';
+        if (host.includes('nonchik.com') || host.includes('kinopoisk.ws') || host.includes('troutcdn.site')) return 'bravo';
         return 'gamma';
     }
 
@@ -779,11 +681,11 @@
     }
 
     function addStylesIfNeeded(type) {
-        const styleId = type === 'bravo' ? 'kp-bravo-style' : 'kp-alfa-style';
-        if (!document.getElementById(styleId)) {
+        // Все каналы используют единый стиль
+        if (!document.getElementById('kp-alfa-style')) {
             const style = document.createElement('style');
-            style.id = styleId;
-            style.textContent = type === 'bravo' ? BRAVO_STYLES : ALFA_STYLES_GAMMA_TANGO;
+            style.id = 'kp-alfa-style';
+            style.textContent = ALFA_STYLES_GAMMA_TANGO;
             document.head.appendChild(style);
         }
     }
@@ -1005,6 +907,8 @@
         newPoster.onerror = () => { newPoster.src = 'data:image/svg+xml,...'; };
 
         const playerWrap = container.querySelector('#kp-player-wrap');
+        // Обеспечиваем корректное отображение плеера
+        playerWrap.style.paddingTop = '56.25%';
         iframe.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:none;border-radius:12px;background:#000;';
         playerWrap.appendChild(iframe);
 
@@ -1032,7 +936,7 @@
     function waitForRebuild() {
         const type = getMirrorTypeForRebuild();
         if (type === 'bravo') {
-            if (!/^\/\d+/.test(window.location.pathname)) {
+            if (!/\/\d+/.test(window.location.pathname)) {
                 showBody();
                 return;
             }
@@ -1702,7 +1606,7 @@
         header.style.cssText = 'flex-shrink: 0; background: #f5f5f5; padding: 6px 10px 4px; border-bottom: 1px solid rgba(0,0,0,0.1);';
         header.innerHTML = `
             <div style="display:flex; justify-content:space-between; align-items:center;">
-                <span style="font-weight:600; font-size:12px;">Закладки <span id="kp-saved-count"></span></span>
+                <span style="font-weight:600; font-size:13px;">Закладки <span id="kp-saved-count"></span></span>
                 <button id="kp-save-current-btn" style="
                     background:#427552; border:none; color:#fff; padding:3px 10px;
                     border-radius:20px; font-size:12px; cursor:pointer; font-weight:600;">
@@ -1842,7 +1746,7 @@
         if (window.location.href !== lastUrl) {
             lastUrl = window.location.href;
             currentUIUrl = null;
-            if (isFbfindDomain() || isNonchikDomain()) {
+            if (isRebuildMirror && !isBlockedPage) {
                 waitForRebuild();
             } else if (isMirrorDomain() && !isBlockedPage) {
                 cleanPage();
@@ -1863,7 +1767,7 @@
     if (titleElement) titleObserver.observe(titleElement, { childList: true });
 
     if (!isBlockedPage) {
-        if (isFbfindDomain() || isNonchikDomain()) {
+        if (isRebuildMirror) {
             waitForRebuild();
         } else if (isMirrorDomain()) {
             cleanPage();
