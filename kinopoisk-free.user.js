@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kinopoisk-free
 // @namespace    http://tampermonkey.net/
-// @version      7.4.2
+// @version      7.4.3
 // @description  Бесплатный просмотр фильмом и сериалов на сайте kinopoisk.ru
 // @author       Nyanta
 // @icon         https://www.kinopoisk.ru/favicon.ico
@@ -171,40 +171,34 @@
         }
     }
 
-    // ---------- Ранняя очистка ----------
-    function injectEarlyCleanCSS() {
-        const host = window.location.hostname;
-        let css = '';
+    // ---------- Упрощённая ранняя очистка ----------
+    function getEarlyCleanCSS() {
+        const h = window.location.hostname;
+        const rules = [];
 
-        if (host.match(/(fbfind\.(life|top)|villybizy\.online|flcksbr\.top)/)) {
-            css = `#tgWrapper, .brand, .topAdPad, #TopAdMb, .adDown, #instructionModal, #tgMain, img[src*="tgimg.png"]{display:none!important}`;
-        } else if (host.match(/nonchik\.com|kinopoisk\.ws|troutcdn\.site/)) {
-            css = `.site-header,.social,.footer,.disclaimer,.spacer-md,#movie_video,#name,.h2{display:none!important}`;
-        } else if (CONFIG.CHANNELS.some(c => host.includes(c.domain))) {
-            css = `.header,.tg-banner,#unreleased-notice,ins,.share-bar,.footer,.info-tabs-bar,#panel-comments,.cw,#rkn-stub,#tgMain,img[src*="tgimg.png"]{display:none!important}`;
+        if (h.match(/(fbfind\.(life|top)|villybizy\.online|flcksbr\.top)/)) {
+            rules.push('#tgWrapper, .brand, .topAdPad, #TopAdMb, .adDown, #instructionModal, #tgMain, img[src*="tgimg.png"]');
+        } else if (h.match(/nonchik\.com|kinopoisk\.ws|troutcdn\.site/)) {
+            rules.push('.site-header,.social,.footer,.disclaimer,.spacer-md,#movie_video,#name,.h2');
+        } else if (CONFIG.CHANNELS.some(c => h.includes(c.domain))) {
+            rules.push('.header,.tg-banner,#unreleased-notice,ins,.share-bar,.footer,.info-tabs-bar,#panel-comments,.cw,#rkn-stub,#tgMain,img[src*="tgimg.png"]');
         }
 
+        return rules.map(selector => selector + '{display:none!important}').join(' ');
+    }
+
+    function injectEarlyCleanCSS() {
+        const css = getEarlyCleanCSS();
         if (css) {
-            const addStyle = () => {
-                if (document.getElementById('kp-early-clean')) return;
+            if (!document.getElementById('kp-early-clean')) {
                 const style = document.createElement('style');
                 style.id = 'kp-early-clean';
                 style.textContent = css;
                 (document.head || document.documentElement).appendChild(style);
-            };
-            if (document.head) {
-                addStyle();
-            } else {
-                const observer = new MutationObserver(() => {
-                    if (document.head) {
-                        observer.disconnect();
-                        addStyle();
-                    }
-                });
-                observer.observe(document.documentElement, { childList: true });
             }
         }
 
+        // Дополнительное скрытие tgMain для всех зеркал
         if (isRebuildMirror) {
             const hideTgMain = () => {
                 const el = document.getElementById('tgMain');
@@ -249,7 +243,7 @@
     }
     releaseBodyForSimpleMirrors();
 
-    // ---------- Единый стиль для всех каналов (включая Браво) ----------
+    // ---------- Единый стиль для всех каналов ----------
     const ALFA_STYLES_GAMMA_TANGO = `
         :root {
             --bg: #0b0d14;
@@ -405,7 +399,6 @@
         .kinobox_loader, .kinobox_menu_button, .kbt_select, .kbt_button,
         .kinobox__loaderWrapper, .kinobox__loader { display: none !important; }
 
-        /* Кнопка торрентов в стиле остальных каналов */
         .kp-torrent-btn {
             display: inline-flex; align-items: center;
             padding: 0.42rem 0.85rem;
@@ -537,6 +530,55 @@
     let embedTimeout = null;
     let embedRestoreTimeout = null;
 
+    // Переиспользуемый toast
+    let toastElement = null;
+    let toastTimer = null;
+
+    function getToast() {
+        if (!toastElement) {
+            toastElement = document.createElement('div');
+            toastElement.id = 'kp-toast';
+            Object.assign(toastElement.style, {
+                position: 'fixed', bottom: '30px', left: '50%', transform: 'translateX(-50%)',
+                background: '#2a2a2e', color: '#f0f0f5', padding: '10px 20px', borderRadius: '8px',
+                border: '1px solid #4b4b52', boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                zIndex: '1000001', fontFamily: 'Segoe UI, Arial, sans-serif', fontSize: '14px',
+                transition: 'opacity 0.3s', opacity: '0', pointerEvents: 'none'
+            });
+            document.body.appendChild(toastElement);
+        }
+        return toastElement;
+    }
+
+    function showToast(message) {
+        const toast = getToast();
+        toast.textContent = message;
+        toast.style.opacity = '1';
+        if (toastTimer) clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => {
+            toast.style.opacity = '0';
+        }, 2000);
+    }
+
+    // Глобальный обработчик закрытия панелей
+    document.addEventListener('click', function(e) {
+        const settingsPanel = document.getElementById('kp-settings-panel');
+        const savedPanel = document.getElementById('kp-saved-panel');
+        const settingsBtn = document.getElementById('kp-settings-btn');
+        const saveBtn = document.getElementById('kp-save-btn');
+
+        if (settingsPanel && settingsPanel.style.display === 'flex') {
+            if (!settingsBtn?.contains(e.target) && !settingsPanel.contains(e.target)) {
+                settingsPanel.style.display = 'none';
+            }
+        }
+        if (savedPanel && savedPanel.style.display === 'flex') {
+            if (!saveBtn?.contains(e.target) && !savedPanel.contains(e.target)) {
+                savedPanel.style.display = 'none';
+            }
+        }
+    }, true);
+
     function loadSettings() {
         try {
             const raw = localStorage.getItem(CONFIG.STORAGE_KEY);
@@ -579,35 +621,6 @@
     function isMirrorDomain() {
         const host = window.location.hostname;
         return CONFIG.CHANNELS.some(c => host.includes(c.domain));
-    }
-
-    function isNonchikDomain() {
-        return window.location.hostname.match(/nonchik\.com/);
-    }
-
-    function isFbfindDomain() {
-        const host = window.location.hostname;
-        return host.match(/(fbfind\.(life|top)|villybizy\.online|flcksbr\.top)/);
-    }
-
-    function showToast(message) {
-        const old = document.getElementById('kp-toast');
-        if (old) old.remove();
-        const toast = document.createElement('div');
-        toast.id = 'kp-toast';
-        toast.textContent = message;
-        Object.assign(toast.style, {
-            position: 'fixed', bottom: '30px', left: '50%', transform: 'translateX(-50%)',
-            background: '#2a2a2e', color: '#f0f0f5', padding: '10px 20px', borderRadius: '8px',
-            border: '1px solid #4b4b52', boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-            zIndex: '1000001', fontFamily: 'Segoe UI, Arial, sans-serif', fontSize: '14px',
-            transition: 'opacity 0.3s'
-        });
-        document.body.appendChild(toast);
-        setTimeout(() => {
-            toast.style.opacity = '0';
-            setTimeout(() => toast.remove(), 300);
-        }, 2000);
     }
 
     function cleanPage() { }
@@ -680,8 +693,7 @@
         return match ? { name: match[1].trim(), year: match[2] } : null;
     }
 
-    function addStylesIfNeeded(type) {
-        // Все каналы используют единый стиль
+    function addStylesIfNeeded() {
         if (!document.getElementById('kp-alfa-style')) {
             const style = document.createElement('style');
             style.id = 'kp-alfa-style';
@@ -770,7 +782,7 @@
             document.addEventListener('click', () => selectEl.classList.remove('open'));
             document.body.innerHTML = '';
             document.body.appendChild(container);
-            addStylesIfNeeded('gamma');
+            addStylesIfNeeded();
         } else if (type === 'tango') {
             const iframeContainer = document.querySelector('.kinobox__iframeWrapper');
             const menuItems = [...document.querySelectorAll('.kinobox__menuItem')];
@@ -848,7 +860,7 @@
             document.addEventListener('click', () => selectEl.classList.remove('open'));
             document.body.innerHTML = '';
             document.body.appendChild(container);
-            addStylesIfNeeded('tango');
+            addStylesIfNeeded();
         } else if (type === 'bravo') {
             rebuildBravo();
             return;
@@ -907,7 +919,6 @@
         newPoster.onerror = () => { newPoster.src = 'data:image/svg+xml,...'; };
 
         const playerWrap = container.querySelector('#kp-player-wrap');
-        // Обеспечиваем корректное отображение плеера
         playerWrap.style.paddingTop = '56.25%';
         iframe.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:none;border-radius:12px;background:#000;';
         playerWrap.appendChild(iframe);
@@ -929,13 +940,14 @@
 
         document.body.innerHTML = '';
         document.body.appendChild(container);
-        addStylesIfNeeded('bravo');
+        addStylesIfNeeded();
         showBody();
     }
 
     function waitForRebuild() {
         const type = getMirrorTypeForRebuild();
         if (type === 'bravo') {
+            // ВАЖНО: для Браво проверяем числовой путь, а не /film/
             if (!/\/\d+/.test(window.location.pathname)) {
                 showBody();
                 return;
@@ -1202,12 +1214,8 @@
             e.stopPropagation();
             if (settingsPanel.style.display === 'flex') {
                 settingsPanel.style.display = 'none';
-                if (settingsPanel._outsideHandler) { document.removeEventListener('click', settingsPanel._outsideHandler); settingsPanel._outsideHandler = null; }
             } else {
-                if (savedPanel.style.display === 'flex') {
-                    savedPanel.style.display = 'none';
-                    if (savedPanel._outsideHandler) { document.removeEventListener('click', savedPanel._outsideHandler); savedPanel._outsideHandler = null; }
-                }
+                if (savedPanel.style.display === 'flex') savedPanel.style.display = 'none';
                 settingsPanel.style.display = 'flex';
                 const panelRect = settingsPanel.getBoundingClientRect();
                 if (panelRect.right > window.innerWidth - 8) {
@@ -1215,14 +1223,6 @@
                 } else {
                     settingsPanel.style.left = '0'; settingsPanel.style.right = 'auto';
                 }
-                const outsideHandler = (ev) => {
-                    if (settingsBtn.contains(ev.target) || settingsPanel.contains(ev.target)) return;
-                    settingsPanel.style.display = 'none';
-                    document.removeEventListener('click', outsideHandler);
-                    settingsPanel._outsideHandler = null;
-                };
-                document.addEventListener('click', outsideHandler);
-                settingsPanel._outsideHandler = outsideHandler;
             }
         });
 
@@ -1230,12 +1230,8 @@
             e.stopPropagation();
             if (savedPanel.style.display === 'flex') {
                 savedPanel.style.display = 'none';
-                if (savedPanel._outsideHandler) { document.removeEventListener('click', savedPanel._outsideHandler); savedPanel._outsideHandler = null; }
             } else {
-                if (settingsPanel.style.display === 'flex') {
-                    settingsPanel.style.display = 'none';
-                    if (settingsPanel._outsideHandler) { document.removeEventListener('click', settingsPanel._outsideHandler); settingsPanel._outsideHandler = null; }
-                }
+                if (settingsPanel.style.display === 'flex') settingsPanel.style.display = 'none';
                 renderSavedMovies(savedPanel);
                 savedPanel.style.display = 'flex';
                 const panelRect = savedPanel.getBoundingClientRect();
@@ -1244,14 +1240,6 @@
                 } else {
                     savedPanel.style.left = '0'; savedPanel.style.right = 'auto';
                 }
-                const outsideHandler = (ev) => {
-                    if (saveBtn.contains(ev.target) || savedPanel.contains(ev.target)) return;
-                    savedPanel.style.display = 'none';
-                    document.removeEventListener('click', outsideHandler);
-                    savedPanel._outsideHandler = null;
-                };
-                document.addEventListener('click', outsideHandler);
-                savedPanel._outsideHandler = outsideHandler;
             }
         });
 
@@ -1326,7 +1314,7 @@
             saveBtn.style.opacity = '0'; saveBtn.style.pointerEvents = 'none'; saveBtn.style.transform = 'scale(0.5)';
         });
 
-        function positionFixedPanel(panel, anchorBtn) {
+        function positionFixedPanel(panel) {
             const vert = settings.btnVertical;
             const horiz = settings.btnPosition;
             panel.style.top = 'auto'; panel.style.bottom = 'auto'; panel.style.left = 'auto'; panel.style.right = 'auto'; panel.style.margin = '0';
@@ -1357,22 +1345,10 @@
             e.stopPropagation();
             if (settingsPanel.style.display === 'flex') {
                 settingsPanel.style.display = 'none';
-                if (settingsPanel._outsideHandler) { document.removeEventListener('click', settingsPanel._outsideHandler); settingsPanel._outsideHandler = null; }
             } else {
-                if (savedPanel.style.display === 'flex') {
-                    savedPanel.style.display = 'none';
-                    if (savedPanel._outsideHandler) { document.removeEventListener('click', savedPanel._outsideHandler); savedPanel._outsideHandler = null; }
-                }
+                if (savedPanel.style.display === 'flex') savedPanel.style.display = 'none';
                 settingsPanel.style.display = 'flex';
-                positionFixedPanel(settingsPanel, settingsBtn);
-                const outsideHandler = (ev) => {
-                    if (settingsBtn.contains(ev.target) || settingsPanel.contains(ev.target)) return;
-                    settingsPanel.style.display = 'none';
-                    document.removeEventListener('click', outsideHandler);
-                    settingsPanel._outsideHandler = null;
-                };
-                document.addEventListener('click', outsideHandler);
-                settingsPanel._outsideHandler = outsideHandler;
+                positionFixedPanel(settingsPanel);
             }
         });
 
@@ -1380,23 +1356,11 @@
             e.stopPropagation();
             if (savedPanel.style.display === 'flex') {
                 savedPanel.style.display = 'none';
-                if (savedPanel._outsideHandler) { document.removeEventListener('click', savedPanel._outsideHandler); savedPanel._outsideHandler = null; }
             } else {
-                if (settingsPanel.style.display === 'flex') {
-                    settingsPanel.style.display = 'none';
-                    if (settingsPanel._outsideHandler) { document.removeEventListener('click', settingsPanel._outsideHandler); settingsPanel._outsideHandler = null; }
-                }
+                if (settingsPanel.style.display === 'flex') settingsPanel.style.display = 'none';
                 renderSavedMovies(savedPanel);
                 savedPanel.style.display = 'flex';
-                positionFixedPanel(savedPanel, saveBtn);
-                const outsideHandler = (ev) => {
-                    if (saveBtn.contains(ev.target) || savedPanel.contains(ev.target)) return;
-                    savedPanel.style.display = 'none';
-                    document.removeEventListener('click', outsideHandler);
-                    savedPanel._outsideHandler = null;
-                };
-                document.addEventListener('click', outsideHandler);
-                savedPanel._outsideHandler = outsideHandler;
+                positionFixedPanel(savedPanel);
             }
         });
 
@@ -1531,7 +1495,6 @@
             }
             saveSettings();
             panel.style.display = 'none';
-            if (panel._outsideHandler) { document.removeEventListener('click', panel._outsideHandler); panel._outsideHandler = null; }
             showToast('Настройки сохранены');
             currentUIUrl = null;
             createUI();
