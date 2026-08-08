@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kinopoisk-free
 // @namespace    http://tampermonkey.net/
-// @version      7.4.3
+// @version      7.4.4
 // @description  Бесплатный просмотр фильмом и сериалов на сайте kinopoisk.ru
 // @author       Nyanta
 // @icon         https://www.kinopoisk.ru/favicon.ico
@@ -15,6 +15,7 @@
 // @match        https://kinokino.vip/*
 // @match        https://flcksbr.top/*
 // @match        https://sspoisk.ru/*
+// @match        https://gromfaer.top/*
 // @match        https://nonchik.com/*
 // @match        https://*.nonchik.com/*
 // @match        https://fbfind.life/*
@@ -58,12 +59,12 @@
         STORAGE_KEY: 'kpRedirectSettings',
         DEFAULT_DOMAIN: 'habster.sbs',
         CHANNELS: [
-            { domain: 'habster.sbs',    name: 'Альфа' },
-            { domain: 'www.kinopoisk.ws',   name: 'Браво' },
-            { domain: 'kinopoisk.film', name: 'Гамма' },
-            { domain: 'kinokino.vip',   name: 'Дельта' },
-            { domain: 'flcksbr.top',    name: 'Танго' },
-            { domain: 'sspoisk.ru',     name: 'Чарли' }
+            { domain: 'habster.sbs',    name: 'Альфа', domains: ['habster.sbs'] },
+            { domain: 'www.kinopoisk.ws',   name: 'Браво', domains: ['www.kinopoisk.ws'] },
+            { domain: 'kinopoisk.film', name: 'Гамма', domains: ['kinopoisk.film'] },
+            { domain: 'kinokino.vip',   name: 'Дельта', domains: ['kinokino.vip'] },
+            { domain: 'flcksbr.top',    name: 'Танго', domains: ['flcksbr.top'] },
+            { domain: 'gromfaer.top',   name: 'Чарли', domains: ['gromfaer.top', 'sspoisk.ru'] }
         ],
         BTN_SIZE: 52,
         SETTINGS_BTN_SIZE: 36,
@@ -108,12 +109,17 @@
         SAVED_STORAGE_KEY: 'kpSavedMovies'
     };
 
+    // Вспомогательная функция: проверяет, принадлежит ли домен какому-либо каналу
+    function matchChannelDomain(hostname) {
+        return CONFIG.CHANNELS.some(c => c.domains.some(d => hostname.includes(d)));
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // ОПРЕДЕЛЕНИЯ ТИПА СТРАНИЦЫ
     // ═══════════════════════════════════════════════════════════════
     const host = window.location.hostname;
     const isRebuildMirror = host.match(/(fbfind\.(life|top)|villybizy\.online|flcksbr\.top|nonchik\.com|troutcdn\.site)/) ||
-                            CONFIG.CHANNELS.some(c => host.includes(c.domain));
+                            matchChannelDomain(host);
     const isBlockedPage = window.location.pathname === '/blocked.html';
 
     // ---------- Улучшенное раннее скрытие ----------
@@ -180,7 +186,7 @@
             rules.push('#tgWrapper, .brand, .topAdPad, #TopAdMb, .adDown, #instructionModal, #tgMain, img[src*="tgimg.png"]');
         } else if (h.match(/nonchik\.com|kinopoisk\.ws|troutcdn\.site/)) {
             rules.push('.site-header,.social,.footer,.disclaimer,.spacer-md,#movie_video,#name,.h2');
-        } else if (CONFIG.CHANNELS.some(c => h.includes(c.domain))) {
+        } else if (matchChannelDomain(h)) {
             rules.push('.header,.tg-banner,#unreleased-notice,ins,.share-bar,.footer,.info-tabs-bar,#panel-comments,.cw,#rkn-stub,#tgMain,img[src*="tgimg.png"]');
         }
 
@@ -233,8 +239,8 @@
 
     function releaseBodyForSimpleMirrors() {
         if (isBlockedPage) return;
-        const host = window.location.hostname;
-        if (!host.match(/(fbfind|nonchik|villybizy|flcksbr|troutcdn)/) && CONFIG.CHANNELS.some(c => host.includes(c.domain))) {
+        const h = window.location.hostname;
+        if (!h.match(/(fbfind|nonchik|villybizy|flcksbr|troutcdn|kinopoisk\.film|kinokino\.vip|sspoisk\.ru|gromfaer\.top|kinopoisk\.ws)/) && matchChannelDomain(h)) {
             window.addEventListener('load', () => {
                 setTimeout(showBody, 50);
             });
@@ -614,13 +620,12 @@
     }
 
     function getChannelName(domain) {
-        const ch = CONFIG.CHANNELS.find(c => c.domain === domain);
+        const ch = CONFIG.CHANNELS.find(c => c.domains.some(d => domain.includes(d)));
         return ch ? ch.name : domain;
     }
 
     function isMirrorDomain() {
-        const host = window.location.hostname;
-        return CONFIG.CHANNELS.some(c => host.includes(c.domain));
+        return matchChannelDomain(window.location.hostname);
     }
 
     function cleanPage() { }
@@ -680,9 +685,9 @@
 
     // ---------- Функции перестройки зеркал ----------
     function getMirrorTypeForRebuild() {
-        const host = window.location.hostname;
-        if (host.includes('flcksbr.top')) return 'tango';
-        if (host.includes('nonchik.com') || host.includes('kinopoisk.ws') || host.includes('troutcdn.site')) return 'bravo';
+        const h = window.location.hostname;
+        if (h.includes('flcksbr.top')) return 'tango';
+        if (h.includes('nonchik.com') || h.includes('kinopoisk.ws') || h.includes('troutcdn.site')) return 'bravo';
         return 'gamma';
     }
 
@@ -705,8 +710,12 @@
     function rebuildMirror() {
         const type = getMirrorTypeForRebuild();
         if (type === 'gamma') {
-            const iframeContainer = document.querySelector('.kinobox_iframe_container');
-            const menuItems = [...document.querySelectorAll('.kinobox_menu li')];
+            let iframeContainer = document.querySelector('.kinobox_iframe_container');
+            let menuItems = [...document.querySelectorAll('.kinobox_menu li')];
+            if (!iframeContainer || menuItems.length === 0) {
+                iframeContainer = document.querySelector('.kinobox__iframeWrapper');
+                menuItems = [...document.querySelectorAll('.kinobox__menuItem')];
+            }
             if (!iframeContainer || menuItems.length === 0) { showBody(); return; }
             const kpId = document.querySelector('.kinobox[data-kinopoisk]')?.getAttribute('data-kinopoisk') || '0';
             const movie = getMovieInfo();
@@ -947,7 +956,6 @@
     function waitForRebuild() {
         const type = getMirrorTypeForRebuild();
         if (type === 'bravo') {
-            // ВАЖНО: для Браво проверяем числовой путь, а не /film/
             if (!/\/\d+/.test(window.location.pathname)) {
                 showBody();
                 return;
@@ -995,7 +1003,11 @@
             if (type === 'gamma') {
                 iframeContainer = document.querySelector('.kinobox_iframe_container');
                 menuItems = document.querySelectorAll('.kinobox_menu li');
-            } else {
+                if (!iframeContainer || menuItems.length === 0) {
+                    iframeContainer = document.querySelector('.kinobox__iframeWrapper');
+                    menuItems = document.querySelectorAll('.kinobox__menuItem');
+                }
+            } else { // tango
                 iframeContainer = document.querySelector('.kinobox__iframeWrapper');
                 menuItems = document.querySelectorAll('.kinobox__menuItem');
             }
@@ -1015,6 +1027,10 @@
             if (type === 'gamma') {
                 iframeContainer = document.querySelector('.kinobox_iframe_container');
                 menuItems = document.querySelectorAll('.kinobox_menu li');
+                if (!iframeContainer || menuItems.length === 0) {
+                    iframeContainer = document.querySelector('.kinobox__iframeWrapper');
+                    menuItems = document.querySelectorAll('.kinobox__menuItem');
+                }
             } else {
                 iframeContainer = document.querySelector('.kinobox__iframeWrapper');
                 menuItems = document.querySelectorAll('.kinobox__menuItem');
@@ -1029,6 +1045,10 @@
         if (type === 'gamma') {
             iframeContainer = document.querySelector('.kinobox_iframe_container');
             menuItems = document.querySelectorAll('.kinobox_menu li');
+            if (!iframeContainer || menuItems.length === 0) {
+                iframeContainer = document.querySelector('.kinobox__iframeWrapper');
+                menuItems = document.querySelectorAll('.kinobox__menuItem');
+            }
         } else {
             iframeContainer = document.querySelector('.kinobox__iframeWrapper');
             menuItems = document.querySelectorAll('.kinobox__menuItem');
