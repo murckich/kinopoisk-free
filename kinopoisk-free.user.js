@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kinopoisk-free
 // @namespace    http://tampermonkey.net/
-// @version      7.4.4
+// @version      7.4.5
 // @description  Бесплатный просмотр фильмом и сериалов на сайте kinopoisk.ru
 // @author       Nyanta
 // @icon         https://www.kinopoisk.ru/favicon.ico
@@ -82,23 +82,42 @@
             '[class*="buttonsContainer"]',
             '[class*="Buttons_container"]'
         ],
-        HOVER_BG: '#e5e5e5',
-        HOVER_TEXT_COLOR: '#1a1a1a',
-        EMBED_IDLE_BG: '#f2f2f2',
-        EMBED_MAIN_COLOR: '#1a1a1a',
-        EMBED_SETTINGS_COLOR: '#1a1a1a',
-        FIXED_TOP_COLOR: '#f0f0f5',
-        FIXED_TOP_IDLE_BG: 'transparent',
-        FIXED_MID_BOTTOM_IDLE_BG: '#f2f2f2',
-        FIXED_MID_BOTTOM_COLOR: '#1a1a1a',
-        FIXED_SETTINGS_COLOR_TOP: '#f0f0f5',
-        FIXED_SETTINGS_COLOR_MID_BOT: '#1a1a1a',
-        PANEL_BG: 'rgba(245, 245, 245, 0.28)',
-        PANEL_BLUR: '24px',
+        LIGHT: {
+            EMBED_MAIN_COLOR: '#1a1a1a',
+            EMBED_SETTINGS_COLOR: '#1a1a1a',
+            EMBED_IDLE_BG: '#f2f2f2',
+            HOVER_BG: '#e5e5e5',
+            HOVER_TEXT_COLOR: '#1a1a1a',
+            FIXED_TOP_COLOR: '#f0f0f5',
+            FIXED_TOP_IDLE_BG: 'transparent',
+            FIXED_TOP_HOVER_BG: '#e5e5e5',
+            FIXED_TOP_HOVER_COLOR: '#1a1a1a',
+            FIXED_MID_BOTTOM_IDLE_BG: '#f2f2f2',
+            FIXED_MID_BOTTOM_COLOR: '#1a1a1a',
+            FIXED_SETTINGS_COLOR_TOP: '#f0f0f5',
+            FIXED_SETTINGS_COLOR_MID_BOT: '#1a1a1a',
+        },
+        DARK: {
+            EMBED_MAIN_COLOR: '#ffffff',
+            EMBED_SETTINGS_COLOR: '#ffffff',
+            EMBED_IDLE_BG: '#1d1d1d',
+            HOVER_BG: '#272727',
+            HOVER_TEXT_COLOR: '#ffffff',
+            FIXED_TOP_COLOR: '#ffffff',
+            FIXED_TOP_IDLE_BG: '#000000',
+            FIXED_TOP_HOVER_BG: '#ffffff',
+            FIXED_TOP_HOVER_COLOR: '#000000',
+            FIXED_MID_BOTTOM_IDLE_BG: '#1d1d1d',
+            FIXED_MID_BOTTOM_COLOR: '#ffffff',
+            FIXED_SETTINGS_COLOR_TOP: '#ffffff',
+            FIXED_SETTINGS_COLOR_MID_BOT: '#ffffff',
+        },
+        PANEL_BG_LIGHT: '#f5f5f5',
+        PANEL_BG_DARK: '#1f1f1f',
+        PANEL_TEXT_LIGHT: '#1a1a1a',
+        PANEL_TEXT_DARK: '#ffffff',
         PANEL_RADIUS: '20px',
         PANEL_PADDING: '6px 8px',
-        PANEL_TEXT_COLOR: '#1a1a1a',
-        PANEL_BORDER: '1px solid rgba(255, 255, 255, 0.3)',
         PANEL_GAP: '6px',
         PANEL_OFFSET_X: 8,
         PANEL_MIN_WIDTH: '160px',
@@ -109,7 +128,36 @@
         SAVED_STORAGE_KEY: 'kpSavedMovies'
     };
 
-    // Вспомогательная функция: проверяет, принадлежит ли домен какому-либо каналу
+    // ═══════════════════════════════════════════════════════════════
+    // ОПРЕДЕЛЕНИЕ ТЕМЫ (улучшено: поиск по частичному совпадению класса)
+    // ═══════════════════════════════════════════════════════════════
+    function isDarkTheme() {
+        // Проверяем только видимые кнопки
+        const darkBtn = document.querySelector('button[class*="style_buttonDark__"]');
+        if (darkBtn && darkBtn.offsetParent !== null) {
+            return true;
+        }
+        const lightBtn = document.querySelector('button[class*="style_buttonLight__"]');
+        if (lightBtn && lightBtn.offsetParent !== null) {
+            return false;
+        }
+        // Если не нашли ни одной видимой кнопки – полагаемся на системную тему
+        return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    }
+
+    function getThemeColors() {
+        return isDarkTheme() ? CONFIG.DARK : CONFIG.LIGHT;
+    }
+
+    function getPanelBackground() {
+        return isDarkTheme() ? CONFIG.PANEL_BG_DARK : CONFIG.PANEL_BG_LIGHT;
+    }
+
+    function getPanelTextColor() {
+        return isDarkTheme() ? CONFIG.PANEL_TEXT_DARK : CONFIG.PANEL_TEXT_LIGHT;
+    }
+
+    // Вспомогательная функция
     function matchChannelDomain(hostname) {
         return CONFIG.CHANNELS.some(c => c.domains.some(d => hostname.includes(d)));
     }
@@ -535,6 +583,8 @@
     let embedObserver = null;
     let embedTimeout = null;
     let embedRestoreTimeout = null;
+    let isCreatingUI = false;
+    let themeWaitActive = false;
 
     // Переиспользуемый toast
     let toastElement = null;
@@ -1162,14 +1212,20 @@
     }
 
     function createUI() {
-        if (currentUIUrl === window.location.href && document.querySelector('.kp-redirect-embed-group, #kp-btn-container')) return;
-        currentUIUrl = window.location.href;
-        removeOldUI();
-        if (!isFilmOrSeriesPage()) return;
-        if (settings.embedMode) {
-            startEmbedMode();
-        } else {
-            buildFixedUI();
+        if (isCreatingUI) return;          // если уже создаётся – выходим
+        isCreatingUI = true;
+        try {
+            if (currentUIUrl === window.location.href && document.querySelector('.kp-redirect-embed-group, #kp-btn-container')) return;
+            currentUIUrl = window.location.href;
+            removeOldUI();
+            if (!isFilmOrSeriesPage()) return;
+            if (settings.embedMode) {
+                startEmbedMode();
+            } else {
+                buildFixedUI();
+            }
+        } finally {
+            isCreatingUI = false;
         }
     }
 
@@ -1181,7 +1237,9 @@
         group.className = 'kp-redirect-embed-group';
         group.style.cssText = `display: inline-flex; align-items: center; gap: ${CONFIG.BUTTONS_GAP}; user-select: none;`;
 
-        const mainBtn = createButton('▶', null, CONFIG.BTN_SIZE, CONFIG.EMBED_MAIN_COLOR, CONFIG.EMBED_IDLE_BG, CONFIG.HOVER_BG, CONFIG.HOVER_TEXT_COLOR);
+        const colors = getThemeColors();
+        const mainBtn = createButton('▶', null, CONFIG.BTN_SIZE,
+            colors.EMBED_MAIN_COLOR, colors.EMBED_IDLE_BG, colors.HOVER_BG, colors.HOVER_TEXT_COLOR);
         mainBtn.title = `${getChannelName(settings.targetDomain)} канал`;
         mainBtn.addEventListener('click', () => {
             const newUrl = window.location.href.replace(/\/\/[^\/]*kinopoisk\.ru/, `//${settings.targetDomain}`);
@@ -1191,7 +1249,8 @@
 
         const settingsWrapper = document.createElement('div');
         settingsWrapper.style.cssText = 'position: relative; display: inline-flex; align-items: center;';
-        const settingsBtn = createButton('⚙️', 'kp-settings-btn', CONFIG.SETTINGS_BTN_SIZE, CONFIG.EMBED_SETTINGS_COLOR, CONFIG.EMBED_IDLE_BG, CONFIG.HOVER_BG, CONFIG.HOVER_TEXT_COLOR);
+        const settingsBtn = createButton('⚙️', 'kp-settings-btn', CONFIG.SETTINGS_BTN_SIZE,
+            colors.EMBED_SETTINGS_COLOR, colors.EMBED_IDLE_BG, colors.HOVER_BG, colors.HOVER_TEXT_COLOR);
         settingsBtn.title = 'Настройки';
         settingsBtn.style.opacity = '0';
         settingsBtn.style.pointerEvents = 'none';
@@ -1207,7 +1266,8 @@
 
         const savedWrapper = document.createElement('div');
         savedWrapper.style.cssText = 'position: relative; display: inline-flex; align-items: center;';
-        const saveBtn = createButton('📑', 'kp-save-btn', CONFIG.SETTINGS_BTN_SIZE, CONFIG.EMBED_SETTINGS_COLOR, CONFIG.EMBED_IDLE_BG, CONFIG.HOVER_BG, CONFIG.HOVER_TEXT_COLOR);
+        const saveBtn = createButton('📑', 'kp-save-btn', CONFIG.SETTINGS_BTN_SIZE,
+            colors.EMBED_SETTINGS_COLOR, colors.EMBED_IDLE_BG, colors.HOVER_BG, colors.HOVER_TEXT_COLOR);
         saveBtn.title = 'Закладки';
         saveBtn.style.opacity = '0';
         saveBtn.style.pointerEvents = 'none';
@@ -1277,9 +1337,20 @@
         applyFixedPosition(container);
 
         const isTop = settings.btnVertical === 'top';
-        const mainColor = isTop ? CONFIG.FIXED_TOP_COLOR : CONFIG.FIXED_MID_BOTTOM_COLOR;
-        const mainIdleBg = isTop ? CONFIG.FIXED_TOP_IDLE_BG : CONFIG.FIXED_MID_BOTTOM_IDLE_BG;
-        const mainBtn = createButton('▶', 'kp-redirect-btn', CONFIG.BTN_SIZE, mainColor, mainIdleBg, CONFIG.HOVER_BG, CONFIG.HOVER_TEXT_COLOR);
+        const colors = getThemeColors();
+        let mainIdleBg, mainColor, mainHoverBg, mainHoverColor;
+        if (isTop) {
+            mainIdleBg = colors.FIXED_TOP_IDLE_BG;
+            mainColor = colors.FIXED_TOP_COLOR;
+            mainHoverBg = colors.FIXED_TOP_HOVER_BG;
+            mainHoverColor = colors.FIXED_TOP_HOVER_COLOR;
+        } else {
+            mainIdleBg = colors.FIXED_MID_BOTTOM_IDLE_BG;
+            mainColor = colors.FIXED_MID_BOTTOM_COLOR;
+            mainHoverBg = colors.HOVER_BG;
+            mainHoverColor = colors.HOVER_TEXT_COLOR;
+        }
+        const mainBtn = createButton('▶', 'kp-redirect-btn', CONFIG.BTN_SIZE, mainColor, mainIdleBg, mainHoverBg, mainHoverColor);
         mainBtn.title = `${getChannelName(settings.targetDomain)} канал`;
         mainBtn.addEventListener('click', () => {
             const newUrl = window.location.href.replace(/\/\/[^\/]*kinopoisk\.ru/, `//${settings.targetDomain}`);
@@ -1287,11 +1358,15 @@
             else window.location.href = newUrl;
         });
 
+        const secondaryIdleBg = colors.EMBED_IDLE_BG;
+        const secondaryColor = colors.EMBED_SETTINGS_COLOR;
+        const secondaryHoverBg = colors.HOVER_BG;
+        const secondaryHoverColor = colors.HOVER_TEXT_COLOR;
+
         const settingsWrapper = document.createElement('div');
         settingsWrapper.style.cssText = 'position: relative; display: inline-flex; align-items: center;';
-        const settingsColor = isTop ? CONFIG.FIXED_SETTINGS_COLOR_TOP : CONFIG.FIXED_SETTINGS_COLOR_MID_BOT;
-        const settingsIdleBg = isTop ? CONFIG.FIXED_TOP_IDLE_BG : CONFIG.FIXED_MID_BOTTOM_IDLE_BG;
-        const settingsBtn = createButton('⚙️', 'kp-settings-btn', CONFIG.SETTINGS_BTN_SIZE, settingsColor, settingsIdleBg, CONFIG.HOVER_BG, CONFIG.HOVER_TEXT_COLOR);
+        const settingsBtn = createButton('⚙️', 'kp-settings-btn', CONFIG.SETTINGS_BTN_SIZE,
+            secondaryColor, secondaryIdleBg, secondaryHoverBg, secondaryHoverColor);
         settingsBtn.title = 'Настройки';
         settingsBtn.style.opacity = '0';
         settingsBtn.style.pointerEvents = 'none';
@@ -1309,7 +1384,8 @@
 
         const savedWrapper = document.createElement('div');
         savedWrapper.style.cssText = 'position: relative; display: inline-flex; align-items: center;';
-        const saveBtn = createButton('📑', 'kp-save-btn', CONFIG.SETTINGS_BTN_SIZE, settingsColor, settingsIdleBg, CONFIG.HOVER_BG, CONFIG.HOVER_TEXT_COLOR);
+        const saveBtn = createButton('📑', 'kp-save-btn', CONFIG.SETTINGS_BTN_SIZE,
+            secondaryColor, secondaryIdleBg, secondaryHoverBg, secondaryHoverColor);
         saveBtn.title = 'Закладки';
         saveBtn.style.opacity = '0';
         saveBtn.style.pointerEvents = 'none';
@@ -1439,22 +1515,21 @@
     function createSettingsPanel() {
         const panel = document.createElement('div');
         panel.id = 'kp-settings-panel';
+        const bgColor = getPanelBackground();
+        const textColor = getPanelTextColor();
         Object.assign(panel.style, {
             zIndex: '1000001',
-            background: CONFIG.PANEL_BG,
-            backdropFilter: `blur(${CONFIG.PANEL_BLUR})`,
-            WebkitBackdropFilter: `blur(${CONFIG.PANEL_BLUR})`,
-            border: CONFIG.PANEL_BORDER,
+            background: bgColor,
             borderRadius: CONFIG.PANEL_RADIUS,
-            padding: CONFIG.PANEL_PADDING,
-            color: CONFIG.PANEL_TEXT_COLOR,
+            color: textColor,
             fontFamily: 'Segoe UI, Arial, sans-serif',
             fontSize: CONFIG.PANEL_FONT_SIZE,
             minWidth: CONFIG.PANEL_MIN_WIDTH,
             boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
             display: 'none',
             flexDirection: 'column',
-            gap: CONFIG.PANEL_GAP
+            gap: CONFIG.PANEL_GAP,
+            padding: CONFIG.PANEL_PADDING
         });
         const channelOptions = CONFIG.CHANNELS.map(ch =>
             `<option value="${ch.domain}" ${settings.targetDomain === ch.domain ? 'selected' : ''}>${ch.name}</option>`
@@ -1466,6 +1541,10 @@
             return `<option value="${key}" ${sel}>${pos.arrow}</option>`;
         }).join('');
         const elementBorderRadius = CONFIG.PANEL_RADIUS;
+        const dark = isDarkTheme();
+        const selectBg = dark ? '#1f1f1f' : '#fff';
+        const selectBorder = dark ? '#cccccc' : '#ccc';
+        const selectColor = dark ? '#ffffff' : '#1a1a1a';
         panel.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(0,0,0,0.1); padding-bottom: 4px; margin-bottom: 0;">
                 <span style="font-weight: 600; font-size: 15px;">Настройки</span>
@@ -1474,8 +1553,8 @@
                 <label style="display: flex; justify-content: space-between; align-items: center;">
                     <span>Канал</span>
                     <select id="kp-domain-select" style="
-                        background:#fff; border:1px solid #ccc; border-radius:${elementBorderRadius};
-                        padding:3px 6px; color:#1a1a1a; font-size:${CONFIG.PANEL_FONT_SIZE}; width:auto; min-width:fit-content;">
+                        background:${selectBg}; border:1px solid ${selectBorder}; border-radius:${elementBorderRadius};
+                        padding:3px 6px; color:${selectColor}; font-size:${CONFIG.PANEL_FONT_SIZE}; width:auto; min-width:fit-content;">
                         ${channelOptions}
                     </select>
                 </label>
@@ -1487,8 +1566,8 @@
                     <label style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0;">
                         <span>Позиция</span>
                         <select id="kp-position-select" style="
-                            background:#fff; border:1px solid #ccc; border-radius:${elementBorderRadius};
-                            padding:3px 6px; color:#1a1a1a; font-size:${CONFIG.PANEL_FONT_SIZE};">
+                            background:${selectBg}; border:1px solid ${selectBorder}; border-radius:${elementBorderRadius};
+                            padding:3px 6px; color:${selectColor}; font-size:${CONFIG.PANEL_FONT_SIZE};">
                             ${positionOptions}
                         </select>
                     </label>
@@ -1568,13 +1647,15 @@
         if (document.getElementById('kp-saved-panel')) return document.getElementById('kp-saved-panel');
         const panel = document.createElement('div');
         panel.id = 'kp-saved-panel';
+        const bgColor = getPanelBackground();
+        const textColor = getPanelTextColor();
         Object.assign(panel.style, {
             zIndex: '1000001',
-            background: '#f5f5f5',
-            borderRadius: '20px',
-            color: '#1a1a1a',
+            background: bgColor,
+            borderRadius: CONFIG.PANEL_RADIUS,
+            color: textColor,
             fontFamily: 'Segoe UI, Arial, sans-serif',
-            fontSize: '13px',
+            fontSize: CONFIG.PANEL_FONT_SIZE,
             width: '260px',
             display: 'none',
             flexDirection: 'column',
@@ -1586,7 +1667,7 @@
         document.head.appendChild(hideScrollStyle);
 
         const header = document.createElement('div');
-        header.style.cssText = 'flex-shrink: 0; background: #f5f5f5; padding: 6px 10px 4px; border-bottom: 1px solid rgba(0,0,0,0.1);';
+        header.style.cssText = `flex-shrink: 0; background: ${bgColor}; padding: 6px 10px 4px; border-bottom: 1px solid rgba(0,0,0,0.1);`;
         header.innerHTML = `
             <div style="display:flex; justify-content:space-between; align-items:center;">
                 <span style="font-weight:600; font-size:13px;">Закладки <span id="kp-saved-count"></span></span>
@@ -1601,7 +1682,7 @@
 
         const list = document.createElement('div');
         list.id = 'kp-saved-list';
-        list.style.cssText = 'flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding: 4px 6px;';
+        list.style.cssText = 'flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding: 4px 4px;';
         list.style.setProperty('scrollbar-width', 'none', 'important');
         list.style.setProperty('-ms-overflow-style', 'none', 'important');
         panel.appendChild(list);
@@ -1679,17 +1760,17 @@
         movies.forEach(movie => {
             const card = document.createElement('div');
             card.style.cssText = `
-                position: relative; height: 64px; flex-shrink: 0; border-radius: 10px;
+                position: relative; height: 64px; flex-shrink: 0; border-radius: 20px;
                 background-image: url('${movie.posterUrl || ''}'); background-size: cover; background-position: center;
-                overflow: hidden; border: 1px solid rgba(0,0,0,0.1); cursor: pointer; transition: border-color 0.2s;
+                overflow: hidden; box-shadow: 0 0 0 1px rgba(0,0,0,0.1); cursor: pointer; transition: box-shadow 0.2s;
                 will-change: transform; backface-visibility: hidden;
             `;
-            card.addEventListener('mouseenter', () => card.style.borderColor = '#818cf8');
-            card.addEventListener('mouseleave', () => card.style.borderColor = 'rgba(0,0,0,0.1)');
+            card.addEventListener('mouseenter', () => card.style.boxShadow = '0 0 0 1px #818cf8');
+            card.addEventListener('mouseleave', () => card.style.boxShadow = '0 0 0 1px rgba(0,0,0,0.1)');
             card.addEventListener('click', () => { window.location.href = `https://www.kinopoisk.ru/film/${movie.id}/`; });
 
             const overlay = document.createElement('div');
-            overlay.style.cssText = 'position: absolute; inset: 0; background: linear-gradient(90deg, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.3) 100%); border-radius: 10px; z-index: 1;';
+            overlay.style.cssText = 'position: absolute; inset: -1px; background: linear-gradient(90deg, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.3) 100%); border-radius: 20px; z-index: 1;';
             card.appendChild(overlay);
 
             const info = document.createElement('div');
@@ -1717,11 +1798,29 @@
     }
 
     function startKinopoiskUI() {
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', () => setTimeout(createUI, 200));
-        } else {
-            setTimeout(createUI, 200);
+        waitForThemeAndCreateUI();
+    }
+
+    function waitForThemeAndCreateUI() {
+        if (themeWaitActive) return;
+        themeWaitActive = true;
+
+        const startTime = Date.now();
+        const maxWait = 3000; // 3 секунды максимум
+
+        function check() {
+            const btn = document.querySelector('button[class*="style_buttonLight__"], button[class*="style_buttonDark__"]');
+            if (btn && btn.offsetParent !== null) {
+                themeWaitActive = false;
+                createUI();
+            } else if (Date.now() - startTime > maxWait) {
+                themeWaitActive = false;
+                createUI(); // fallback на системную тему
+            } else {
+                requestAnimationFrame(check);
+            }
         }
+        check();
     }
 
     let lastUrl = window.location.href;
@@ -1734,7 +1833,8 @@
             } else if (isMirrorDomain() && !isBlockedPage) {
                 cleanPage();
             } else if (!isBlockedPage) {
-                createUI();
+                themeWaitActive = false;
+                waitForThemeAndCreateUI();
             }
         }
     }
