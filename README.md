@@ -14,6 +14,9 @@
   <a href="https://github.com/murckich/kinopoisk-free/blob/main/LICENSE">
     <img src="https://img.shields.io/github/license/murckich/kinopoisk-free" alt="License">
   </a>
+  <a href="https://greasyfork.org/ru/scripts/589614-kinopoisk-free">
+    <img src="https://img.shields.io/greasyfork/dt/589614?style=social&logo=greasyfork&logoColor=black&label=Installs" alt="GreasyFork">
+  </a>
   <a href="https://github.com/murckich/kinopoisk-free/stargazers">
     <img src="https://img.shields.io/github/stars/murckich/kinopoisk-free?style=social" alt="GitHub stars">
   </a>
