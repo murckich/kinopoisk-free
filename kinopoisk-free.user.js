@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kinopoisk-free
 // @namespace    http://tampermonkey.net/
-// @version      7.4.5
+// @version      7.4.6
 // @description  Бесплатный просмотр фильмом и сериалов на сайте kinopoisk.ru
 // @author       Nyanta
 // @icon         https://www.kinopoisk.ru/favicon.ico
@@ -236,6 +236,11 @@
             rules.push('.site-header,.social,.footer,.disclaimer,.spacer-md,#movie_video,#name,.h2');
         } else if (matchChannelDomain(h)) {
             rules.push('.header,.tg-banner,#unreleased-notice,ins,.share-bar,.footer,.info-tabs-bar,#panel-comments,.cw,#rkn-stub,#tgMain,img[src*="tgimg.png"]');
+
+            // Дополнительные скрытия только для habster.sbs (новый дизайн)
+            if ((h === 'habster.sbs' || h.endsWith('.habster.sbs')) && !isBlockedPage) {
+                rules.push('.support-fab, #new-release-notice, #trending-block, .info-section');
+            }
         }
 
         return rules.map(selector => selector + '{display:none!important}').join(' ');
