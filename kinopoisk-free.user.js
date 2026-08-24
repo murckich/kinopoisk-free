@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kinopoisk-free
 // @namespace    http://tampermonkey.net/
-// @version      7.4.6
+// @version      7.4.7
 // @description  Бесплатный просмотр фильмом и сериалов на сайте kinopoisk.ru
 // @author       Nyanta
 // @icon         https://www.kinopoisk.ru/favicon.ico
@@ -15,7 +15,9 @@
 // @match        https://kinokino.vip/*
 // @match        https://flcksbr.top/*
 // @match        https://sspoisk.ru/*
+// @match        https://*.sspoisk.ru/*
 // @match        https://gromfaer.top/*
+// @match        https://*.gromfaer.top/*
 // @match        https://nonchik.com/*
 // @match        https://*.nonchik.com/*
 // @match        https://fbfind.life/*
@@ -64,7 +66,7 @@
             { domain: 'kinopoisk.film', name: 'Гамма', domains: ['kinopoisk.film'] },
             { domain: 'kinokino.vip',   name: 'Дельта', domains: ['kinokino.vip'] },
             { domain: 'flcksbr.top',    name: 'Танго', domains: ['flcksbr.top'] },
-            { domain: 'gromfaer.top',   name: 'Чарли', domains: ['gromfaer.top', 'sspoisk.ru'] }
+            { domain: 'www.gromfaer.top', name: 'Чарли', domains: ['www.gromfaer.top', 'gromfaer.top', 'sspoisk.ru', 'www.sspoisk.ru'] }
         ],
         BTN_SIZE: 52,
         SETTINGS_BTN_SIZE: 36,
@@ -78,6 +80,8 @@
         },
         EMBED_SELECTOR: '.styles_buttonsContainer__DCKJk',
         FALLBACK_SELECTORS: [
+            '[data-test-id="ContentActions"]',
+            '[data-tid="ContentActions"]',
             '.film-header__buttons',
             '[class*="buttonsContainer"]',
             '[class*="Buttons_container"]'
@@ -128,20 +132,32 @@
         SAVED_STORAGE_KEY: 'kpSavedMovies'
     };
 
+    // Функция для внедрения стилей, когда <head> готов
+    function injectStyleWhenHeadReady(id, css) {
+        const style = document.createElement('style');
+        style.id = id;
+        style.textContent = css;
+        if (document.head) {
+            document.head.appendChild(style);
+        } else {
+            const headObserver = new MutationObserver(() => {
+                if (document.head) {
+                    headObserver.disconnect();
+                    document.head.appendChild(style);
+                }
+            });
+            headObserver.observe(document.documentElement, { childList: true });
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════════
-    // ОПРЕДЕЛЕНИЕ ТЕМЫ (улучшено: поиск по частичному совпадению класса)
+    // ОПРЕДЕЛЕНИЕ ТЕМЫ
     // ═══════════════════════════════════════════════════════════════
     function isDarkTheme() {
-        // Проверяем только видимые кнопки
         const darkBtn = document.querySelector('button[class*="style_buttonDark__"]');
-        if (darkBtn && darkBtn.offsetParent !== null) {
-            return true;
-        }
+        if (darkBtn && darkBtn.offsetParent !== null) return true;
         const lightBtn = document.querySelector('button[class*="style_buttonLight__"]');
-        if (lightBtn && lightBtn.offsetParent !== null) {
-            return false;
-        }
-        // Если не нашли ни одной видимой кнопки – полагаемся на системную тему
+        if (lightBtn && lightBtn.offsetParent !== null) return false;
         return window.matchMedia('(prefers-color-scheme: dark)').matches;
     }
 
@@ -157,7 +173,6 @@
         return isDarkTheme() ? CONFIG.PANEL_TEXT_DARK : CONFIG.PANEL_TEXT_LIGHT;
     }
 
-    // Вспомогательная функция
     function matchChannelDomain(hostname) {
         return CONFIG.CHANNELS.some(c => c.domains.some(d => hostname.includes(d)));
     }
@@ -166,66 +181,30 @@
     // ОПРЕДЕЛЕНИЯ ТИПА СТРАНИЦЫ
     // ═══════════════════════════════════════════════════════════════
     const host = window.location.hostname;
-    const isRebuildMirror = host.match(/(fbfind\.(life|top)|villybizy\.online|flcksbr\.top|nonchik\.com|troutcdn\.site)/) ||
-                            matchChannelDomain(host);
-    const isBlockedPage = window.location.pathname === '/blocked.html';
+    const isBlockedPage = /^\/blocked\.html(\/|$)/.test(window.location.pathname);
+    const isHabster = host === 'habster.sbs' || host.endsWith('.habster.sbs');
+    const isRebuildMirror = (
+        host.match(/(fbfind\.(life|top)|villybizy\.online|flcksbr\.top|nonchik\.com|troutcdn\.site)/) ||
+        (matchChannelDomain(host) && !isHabster)
+    );
 
-    // ---------- Улучшенное раннее скрытие ----------
+    // ─── Раннее скрытие body (для зеркал, которые будем перестраивать) ───
     if (isRebuildMirror || isBlockedPage) {
-        const hideStyle = document.createElement('style');
-        hideStyle.id = 'kp-hide-body-early';
-        hideStyle.textContent = 'body { visibility: hidden !important; }';
-        if (document.head) {
-            document.head.insertBefore(hideStyle, document.head.firstChild);
-        } else {
-            const headObserver = new MutationObserver(() => {
-                if (document.head) {
-                    headObserver.disconnect();
-                    document.head.insertBefore(hideStyle, document.head.firstChild);
-                }
-            });
-            headObserver.observe(document.documentElement, { childList: true });
-        }
+        injectStyleWhenHeadReady('kp-hide-body-early', 'body { visibility: hidden !important; }');
         document.documentElement.style.visibility = 'hidden';
         document.documentElement.style.background = '#0b0d14';
     }
 
-    // ---------- Ранний фон ----------
+    // ─── Ранний фон ───
     if (isRebuildMirror) {
-        const style = document.createElement('style');
-        style.id = 'kp-base-bg-mirror';
-        style.textContent = 'html, body { background: #0b0d14 !important; }';
-        if (document.head) {
-            document.head.appendChild(style);
-        } else {
-            const headObserver = new MutationObserver(() => {
-                if (document.head) {
-                    headObserver.disconnect();
-                    document.head.appendChild(style);
-                }
-            });
-            headObserver.observe(document.documentElement, { childList: true });
-        }
+        injectStyleWhenHeadReady('kp-base-bg-mirror', 'html, body { background: #0b0d14 !important; }');
     }
 
     if (isBlockedPage) {
-        const style = document.createElement('style');
-        style.id = 'kp-base-bg';
-        style.textContent = 'html, body { background: #0b0d14 !important; }';
-        if (document.head) {
-            document.head.appendChild(style);
-        } else {
-            const headObserver = new MutationObserver(() => {
-                if (document.head) {
-                    headObserver.disconnect();
-                    document.head.appendChild(style);
-                }
-            });
-            headObserver.observe(document.documentElement, { childList: true });
-        }
+        injectStyleWhenHeadReady('kp-base-bg', 'html, body { background: #0b0d14 !important; }');
     }
 
-    // ---------- Упрощённая ранняя очистка ----------
+    // ─── Ранняя очистка CSS ───
     function getEarlyCleanCSS() {
         const h = window.location.hostname;
         const rules = [];
@@ -236,9 +215,7 @@
             rules.push('.site-header,.social,.footer,.disclaimer,.spacer-md,#movie_video,#name,.h2');
         } else if (matchChannelDomain(h)) {
             rules.push('.header,.tg-banner,#unreleased-notice,ins,.share-bar,.footer,.info-tabs-bar,#panel-comments,.cw,#rkn-stub,#tgMain,img[src*="tgimg.png"]');
-
-            // Дополнительные скрытия только для habster.sbs (новый дизайн)
-            if ((h === 'habster.sbs' || h.endsWith('.habster.sbs')) && !isBlockedPage) {
+            if (isHabster && !isBlockedPage) {
                 rules.push('.support-fab, #new-release-notice, #trending-block, .info-section');
             }
         }
@@ -249,15 +226,10 @@
     function injectEarlyCleanCSS() {
         const css = getEarlyCleanCSS();
         if (css) {
-            if (!document.getElementById('kp-early-clean')) {
-                const style = document.createElement('style');
-                style.id = 'kp-early-clean';
-                style.textContent = css;
-                (document.head || document.documentElement).appendChild(style);
-            }
+            injectStyleWhenHeadReady('kp-early-clean', css);
         }
 
-        // Дополнительное скрытие tgMain для всех зеркал
+        // Скрытие tgMain для зеркал (если появятся)
         if (isRebuildMirror) {
             const hideTgMain = () => {
                 const el = document.getElementById('tgMain');
@@ -271,38 +243,37 @@
                 });
             };
             hideTgMain();
-            new MutationObserver(() => hideTgMain())
-                .observe(document.documentElement, { childList: true, subtree: true });
+            // Debounce
+            let tgTimer = null;
+            new MutationObserver(() => {
+                if (tgTimer) clearTimeout(tgTimer);
+                tgTimer = setTimeout(hideTgMain, 100);
+            }).observe(document.documentElement, { childList: true, subtree: true });
         }
     }
 
     injectEarlyCleanCSS();
 
+    // Показ страницы после перестройки или при ошибке
     function showBody() {
         document.documentElement.style.visibility = '';
-        const earlyHide = document.getElementById('kp-hide-body-early');
-        if (earlyHide) earlyHide.remove();
-        const baseBg = document.getElementById('kp-base-bg-mirror');
-        if (baseBg) baseBg.remove();
-        const baseBgBlocked = document.getElementById('kp-base-bg');
-        if (baseBgBlocked) baseBgBlocked.remove();
-        const hs = document.getElementById('kp-hide-body');
-        if (hs) hs.remove();
+        const ids = ['kp-hide-body-early', 'kp-base-bg-mirror', 'kp-base-bg', 'kp-hide-body'];
+        ids.forEach(id => document.getElementById(id)?.remove());
     }
 
+    // Для простых зеркал (habster) показываем страницу сразу
     function releaseBodyForSimpleMirrors() {
         if (isBlockedPage) return;
-        const h = window.location.hostname;
-        if (!h.match(/(fbfind|nonchik|villybizy|flcksbr|troutcdn|kinopoisk\.film|kinokino\.vip|sspoisk\.ru|gromfaer\.top|kinopoisk\.ws)/) && matchChannelDomain(h)) {
-            window.addEventListener('load', () => {
-                setTimeout(showBody, 50);
-            });
-            setTimeout(showBody, 2000);
+        if (isHabster) {
+            showBody();
+        } else if (!isRebuildMirror && matchChannelDomain(host)) {
+            // Остальные простые зеркала (если такие будут)
+            showBody();
         }
     }
     releaseBodyForSimpleMirrors();
 
-    // ---------- Единый стиль для всех каналов ----------
+    // ─── Единый стиль для всех каналов ───
     const ALFA_STYLES_GAMMA_TANGO = `
         :root {
             --bg: #0b0d14;
@@ -582,7 +553,7 @@
         #licntBF6C, span[style="display: none;"] { display: none !important; }
     `;
 
-    // ---------- Настройки ----------
+    // ─── Настройки ───
     let settings = loadSettings();
     let currentUIUrl = null;
     let embedObserver = null;
@@ -591,7 +562,6 @@
     let isCreatingUI = false;
     let themeWaitActive = false;
 
-    // Переиспользуемый toast
     let toastElement = null;
     let toastTimer = null;
 
@@ -621,7 +591,7 @@
         }, 2000);
     }
 
-    // Глобальный обработчик закрытия панелей
+    // Глобальный обработчик закрытия панелей и селектов
     document.addEventListener('click', function(e) {
         const settingsPanel = document.getElementById('kp-settings-panel');
         const savedPanel = document.getElementById('kp-saved-panel');
@@ -637,6 +607,12 @@
             if (!saveBtn?.contains(e.target) && !savedPanel.contains(e.target)) {
                 savedPanel.style.display = 'none';
             }
+        }
+
+        // Закрытие открытого селекта плеера
+        const openSelect = document.querySelector('.kp-select.open');
+        if (openSelect && !openSelect.contains(e.target)) {
+            openSelect.classList.remove('open');
         }
     }, true);
 
@@ -680,18 +656,13 @@
     }
 
     function isMirrorDomain() {
-        return matchChannelDomain(window.location.hostname);
+        return matchChannelDomain(host);
     }
 
-    function cleanPage() { }
-
-    // ---------- Обработчик страницы «Контент удалён» ----------
+    // ─── Обработка страницы «Контент удалён» ───
     function applyBlockedStyles() {
         if (!document.getElementById('shell')) return;
-        const style = document.createElement('style');
-        style.id = 'kp-blocked-style';
-        style.textContent = BLOCKED_PAGE_STYLES;
-        document.head.appendChild(style);
+        injectStyleWhenHeadReady('kp-blocked-style', BLOCKED_PAGE_STYLES);
 
         const shell = document.getElementById('shell');
         const textDiv = shell.querySelector('.text');
@@ -738,7 +709,7 @@
     }
     initBlockedPageObserver();
 
-    // ---------- Функции перестройки зеркал ----------
+    // ─── Функции перестройки зеркал ───
     function getMirrorTypeForRebuild() {
         const h = window.location.hostname;
         if (h.includes('flcksbr.top')) return 'tango';
@@ -755,181 +726,139 @@
 
     function addStylesIfNeeded() {
         if (!document.getElementById('kp-alfa-style')) {
-            const style = document.createElement('style');
-            style.id = 'kp-alfa-style';
-            style.textContent = ALFA_STYLES_GAMMA_TANGO;
-            document.head.appendChild(style);
+            injectStyleWhenHeadReady('kp-alfa-style', ALFA_STYLES_GAMMA_TANGO);
         }
+    }
+
+    // Вспомогательная функция для получения элементов kinobox в зависимости от типа зеркала
+    function getKinoboxElements(type) {
+        const isTango = type === 'tango';
+        let iframeContainer, menuItems, activeClass;
+
+        if (isTango) {
+            iframeContainer = document.querySelector('.kinobox__iframeWrapper');
+            menuItems = [...document.querySelectorAll('.kinobox__menuItem')];
+            activeClass = 'kinobox__menuItem--active';
+        } else {
+            iframeContainer = document.querySelector('.kinobox_iframe_container');
+            menuItems = [...document.querySelectorAll('.kinobox_menu li')];
+            activeClass = 'kinobox_menu_active';
+            if (!iframeContainer || menuItems.length === 0) {
+                iframeContainer = document.querySelector('.kinobox__iframeWrapper');
+                menuItems = [...document.querySelectorAll('.kinobox__menuItem')];
+                activeClass = 'kinobox__menuItem--active';
+            }
+        }
+
+        return { iframeContainer, menuItems, activeClass };
+    }
+
+    // Универсальный билдер страницы для Gamma/Tango
+    function buildKinoboxPage(iframeContainer, menuItems, kpId, movie, activeClass) {
+        if (!iframeContainer || menuItems.length === 0) {
+            showBody();
+            return;
+        }
+
+        const container = document.createElement('div');
+        container.id = 'kp-alfa-page';
+        container.innerHTML = `
+            <div class="player-section">
+                <div class="player-top-bar">
+                    <div class="kp-select" id="kp-select">
+                        <div class="kp-select-trigger" id="kp-select-trigger">
+                            <span class="kp-select-dot"></span>
+                            <span id="kp-select-label">Плеер</span>
+                            <svg class="kp-select-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        </div>
+                        <div class="kp-select-menu" id="kp-select-menu"></div>
+                    </div>
+                </div>
+                <div class="vpn-warning">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                    Плеер можно выбрать другой, нажмите на список
+                </div>
+                <div class="player-wrap" id="kp-player-wrap"></div>
+                <div class="vpn-warning">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                    VPN может мешать воспроизведению
+                </div>
+            </div>
+            <div class="movie-info">
+                <div class="movie-info-inner">
+                    <div class="movie-poster-wrap"><img class="movie-poster-img" id="kp-movie-poster" src="" alt=""></div>
+                    <div class="movie-details" id="kp-movie-details">
+                        <h1 class="movie-title"></h1><div class="movie-orig"></div><div class="movie-meta"></div><div class="movie-rows"></div><div class="movie-desc"></div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        const posterImg = container.querySelector('#kp-movie-poster');
+        posterImg.src = `https://kinopoiskapiunofficial.tech/images/posters/kp_small/${kpId}.jpg`;
+        posterImg.onerror = () => { posterImg.style.display = 'none'; };
+
+        if (movie) {
+            container.querySelector('.movie-title').textContent = movie.name;
+            container.querySelector('.movie-orig').textContent = movie.year;
+        }
+
+        const playerWrap = container.querySelector('#kp-player-wrap');
+        iframeContainer.style.position = 'relative';
+        iframeContainer.style.paddingTop = '56.25%';
+        playerWrap.appendChild(iframeContainer);
+
+        const selectMenu = container.querySelector('#kp-select-menu');
+        const selectLabel = container.querySelector('#kp-select-label');
+        const selectEl = container.querySelector('#kp-select');
+        let activeIndex = -1;
+
+        menuItems.forEach((origItem, idx) => {
+            const item = document.createElement('div');
+            item.className = 'kp-select-item';
+            const isActive = origItem.classList.contains(activeClass);
+            if (isActive) {
+                item.classList.add('active');
+                activeIndex = idx;
+                selectLabel.textContent = origItem.textContent.replace(/^\d+\s*::\s*/, '').trim();
+            }
+            item.innerHTML = `<span class="kp-select-num">${idx+1}</span><span>${origItem.textContent.replace(/^\d+\s*::\s*/, '').trim()}</span>`;
+            item.addEventListener('click', () => {
+                origItem.click();
+                selectLabel.textContent = origItem.textContent.replace(/^\d+\s*::\s*/, '').trim();
+                selectEl.classList.remove('open');
+                selectMenu.querySelectorAll('.kp-select-item').forEach(el => el.classList.remove('active'));
+                item.classList.add('active');
+            });
+            selectMenu.appendChild(item);
+        });
+
+        if (activeIndex === -1 && menuItems.length > 0) {
+            menuItems[0].click();
+            selectLabel.textContent = menuItems[0].textContent.replace(/^\d+\s*::\s*/, '').trim();
+            selectMenu.querySelector('.kp-select-item').classList.add('active');
+        }
+
+        const selectTrigger = container.querySelector('#kp-select-trigger');
+        selectTrigger.addEventListener('click', (e) => { e.stopPropagation(); selectEl.classList.toggle('open'); });
+
+        document.body.innerHTML = '';
+        document.body.appendChild(container);
+        addStylesIfNeeded();
+        showBody();
     }
 
     function rebuildMirror() {
         const type = getMirrorTypeForRebuild();
-        if (type === 'gamma') {
-            let iframeContainer = document.querySelector('.kinobox_iframe_container');
-            let menuItems = [...document.querySelectorAll('.kinobox_menu li')];
-            if (!iframeContainer || menuItems.length === 0) {
-                iframeContainer = document.querySelector('.kinobox__iframeWrapper');
-                menuItems = [...document.querySelectorAll('.kinobox__menuItem')];
-            }
-            if (!iframeContainer || menuItems.length === 0) { showBody(); return; }
-            const kpId = document.querySelector('.kinobox[data-kinopoisk]')?.getAttribute('data-kinopoisk') || '0';
-            const movie = getMovieInfo();
-            const container = document.createElement('div');
-            container.id = 'kp-alfa-page';
-            container.innerHTML = `
-                <div class="player-section">
-                    <div class="player-top-bar">
-                        <div class="kp-select" id="kp-select">
-                            <div class="kp-select-trigger" id="kp-select-trigger">
-                                <span class="kp-select-dot"></span>
-                                <span id="kp-select-label">Плеер</span>
-                                <svg class="kp-select-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
-                            </div>
-                            <div class="kp-select-menu" id="kp-select-menu"></div>
-                        </div>
-                    </div>
-                    <div class="vpn-warning">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
-                        Плеер можно выбрать другой, нажмите на список
-                    </div>
-                    <div class="player-wrap" id="kp-player-wrap"></div>
-                    <div class="vpn-warning">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
-                        VPN может мешать воспроизведению
-                    </div>
-                </div>
-                <div class="movie-info">
-                    <div class="movie-info-inner">
-                        <div class="movie-poster-wrap"><img class="movie-poster-img" id="kp-movie-poster" src="" alt=""></div>
-                        <div class="movie-details" id="kp-movie-details">
-                            <h1 class="movie-title"></h1><div class="movie-orig"></div><div class="movie-meta"></div><div class="movie-rows"></div><div class="movie-desc"></div>
-                        </div>
-                    </div>
-                </div>
-            `;
-            const posterImg = container.querySelector('#kp-movie-poster');
-            posterImg.src = `https://kinopoiskapiunofficial.tech/images/posters/kp_small/${kpId}.jpg`;
-            posterImg.onerror = () => { posterImg.src = 'data:image/svg+xml,...'; };
-            if (movie) {
-                container.querySelector('.movie-title').textContent = movie.name;
-                container.querySelector('.movie-orig').textContent = movie.year;
-            }
-            const playerWrap = container.querySelector('#kp-player-wrap');
-            iframeContainer.style.position = 'relative';
-            iframeContainer.style.paddingTop = '56.25%';
-            playerWrap.appendChild(iframeContainer);
-            const selectMenu = container.querySelector('#kp-select-menu');
-            const selectLabel = container.querySelector('#kp-select-label');
-            const selectEl = container.querySelector('#kp-select');
-            let activeIndex = -1;
-            menuItems.forEach((origItem, idx) => {
-                const item = document.createElement('div');
-                item.className = 'kp-select-item';
-                const isActive = origItem.classList.contains('kinobox_menu_active') || origItem.classList.contains('kinobox__menuItem--active');
-                if (isActive) { item.classList.add('active'); activeIndex = idx; selectLabel.textContent = origItem.textContent.replace(/^\d+\s*::\s*/, '').trim(); }
-                item.innerHTML = `<span class="kp-select-num">${idx+1}</span><span>${origItem.textContent.replace(/^\d+\s*::\s*/, '').trim()}</span>`;
-                item.addEventListener('click', () => {
-                    origItem.click();
-                    selectLabel.textContent = origItem.textContent.replace(/^\d+\s*::\s*/, '').trim();
-                    selectEl.classList.remove('open');
-                    selectMenu.querySelectorAll('.kp-select-item').forEach(el => el.classList.remove('active'));
-                    item.classList.add('active');
-                });
-                selectMenu.appendChild(item);
-            });
-            if (activeIndex === -1 && menuItems.length > 0) {
-                menuItems[0].click(); selectLabel.textContent = menuItems[0].textContent.replace(/^\d+\s*::\s*/, '').trim();
-                selectMenu.querySelector('.kp-select-item').classList.add('active');
-            }
-            const selectTrigger = container.querySelector('#kp-select-trigger');
-            selectTrigger.addEventListener('click', (e) => { e.stopPropagation(); selectEl.classList.toggle('open'); });
-            document.addEventListener('click', () => selectEl.classList.remove('open'));
-            document.body.innerHTML = '';
-            document.body.appendChild(container);
-            addStylesIfNeeded();
-        } else if (type === 'tango') {
-            const iframeContainer = document.querySelector('.kinobox__iframeWrapper');
-            const menuItems = [...document.querySelectorAll('.kinobox__menuItem')];
-            if (!iframeContainer || menuItems.length === 0) { showBody(); return; }
-            const kpId = document.querySelector('.kinobox[data-kinopoisk]')?.getAttribute('data-kinopoisk') || '0';
-            const movie = getMovieInfo();
-            const container = document.createElement('div');
-            container.id = 'kp-alfa-page';
-            container.innerHTML = `
-                <div class="player-section">
-                    <div class="player-top-bar">
-                        <div class="kp-select" id="kp-select">
-                            <div class="kp-select-trigger" id="kp-select-trigger">
-                                <span class="kp-select-dot"></span>
-                                <span id="kp-select-label">Плеер</span>
-                                <svg class="kp-select-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
-                            </div>
-                            <div class="kp-select-menu" id="kp-select-menu"></div>
-                        </div>
-                    </div>
-                    <div class="vpn-warning">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
-                        Плеер можно выбрать другой, нажмите на список
-                    </div>
-                    <div class="player-wrap" id="kp-player-wrap"></div>
-                    <div class="vpn-warning">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
-                        VPN может мешать воспроизведению
-                    </div>
-                </div>
-                <div class="movie-info">
-                    <div class="movie-info-inner">
-                        <div class="movie-poster-wrap"><img class="movie-poster-img" id="kp-movie-poster" src="" alt=""></div>
-                        <div class="movie-details" id="kp-movie-details">
-                            <h1 class="movie-title"></h1><div class="movie-orig"></div><div class="movie-meta"></div><div class="movie-rows"></div><div class="movie-desc"></div>
-                        </div>
-                    </div>
-                </div>
-            `;
-            const posterImg = container.querySelector('#kp-movie-poster');
-            posterImg.src = `https://kinopoiskapiunofficial.tech/images/posters/kp_small/${kpId}.jpg`;
-            if (movie) {
-                container.querySelector('.movie-title').textContent = movie.name;
-                container.querySelector('.movie-orig').textContent = movie.year;
-            }
-            const playerWrap = container.querySelector('#kp-player-wrap');
-            iframeContainer.style.position = 'relative';
-            iframeContainer.style.paddingTop = '56.25%';
-            playerWrap.appendChild(iframeContainer);
-            const selectMenu = container.querySelector('#kp-select-menu');
-            const selectLabel = container.querySelector('#kp-select-label');
-            const selectEl = container.querySelector('#kp-select');
-            let activeIndex = -1;
-            menuItems.forEach((origItem, idx) => {
-                const item = document.createElement('div');
-                item.className = 'kp-select-item';
-                const isActive = origItem.classList.contains('kinobox__menuItem--active');
-                if (isActive) { item.classList.add('active'); activeIndex = idx; selectLabel.textContent = origItem.textContent.replace(/^\d+\s*::\s*/, '').trim(); }
-                item.innerHTML = `<span class="kp-select-num">${idx+1}</span><span>${origItem.textContent.replace(/^\d+\s*::\s*/, '').trim()}</span>`;
-                item.addEventListener('click', () => {
-                    origItem.click();
-                    selectLabel.textContent = origItem.textContent.replace(/^\d+\s*::\s*/, '').trim();
-                    selectEl.classList.remove('open');
-                    selectMenu.querySelectorAll('.kp-select-item').forEach(el => el.classList.remove('active'));
-                    item.classList.add('active');
-                });
-                selectMenu.appendChild(item);
-            });
-            if (activeIndex === -1 && menuItems.length > 0) {
-                menuItems[0].click(); selectLabel.textContent = menuItems[0].textContent.replace(/^\d+\s*::\s*/, '').trim();
-                selectMenu.querySelector('.kp-select-item').classList.add('active');
-            }
-            const selectTrigger = container.querySelector('#kp-select-trigger');
-            selectTrigger.addEventListener('click', (e) => { e.stopPropagation(); selectEl.classList.toggle('open'); });
-            document.addEventListener('click', () => selectEl.classList.remove('open'));
-            document.body.innerHTML = '';
-            document.body.appendChild(container);
-            addStylesIfNeeded();
-        } else if (type === 'bravo') {
+        if (type === 'bravo') {
             rebuildBravo();
             return;
         }
-        showBody();
+
+        const { iframeContainer, menuItems, activeClass } = getKinoboxElements(type);
+        const kpId = document.querySelector('.kinobox[data-kinopoisk]')?.getAttribute('data-kinopoisk') || '0';
+        const movie = getMovieInfo();
+        buildKinoboxPage(iframeContainer, menuItems, kpId, movie, activeClass);
     }
 
     function rebuildBravo() {
@@ -980,7 +909,7 @@
             const kpId = document.querySelector('script[data-kinopoisk]')?.getAttribute('data-kinopoisk') || '0';
             newPoster.src = `https://kinopoiskapiunofficial.tech/images/posters/kp_small/${kpId}.jpg`;
         }
-        newPoster.onerror = () => { newPoster.src = 'data:image/svg+xml,...'; };
+        newPoster.onerror = () => { newPoster.style.display = 'none'; };
 
         const playerWrap = container.querySelector('#kp-player-wrap');
         playerWrap.style.paddingTop = '56.25%';
@@ -996,10 +925,8 @@
 
         const movie = getMovieInfo();
         if (movie) {
-            const titleEl = container.querySelector('.movie-title');
-            const origEl = container.querySelector('.movie-orig');
-            if (titleEl) titleEl.textContent = movie.name;
-            if (origEl) origEl.textContent = movie.year || '';
+            container.querySelector('.movie-title').textContent = movie.name;
+            container.querySelector('.movie-orig').textContent = movie.year || '';
         }
 
         document.body.innerHTML = '';
@@ -1054,18 +981,7 @@
         let attempts = 0;
         const maxAttempts = 60;
         const interval = setInterval(() => {
-            let iframeContainer, menuItems;
-            if (type === 'gamma') {
-                iframeContainer = document.querySelector('.kinobox_iframe_container');
-                menuItems = document.querySelectorAll('.kinobox_menu li');
-                if (!iframeContainer || menuItems.length === 0) {
-                    iframeContainer = document.querySelector('.kinobox__iframeWrapper');
-                    menuItems = document.querySelectorAll('.kinobox__menuItem');
-                }
-            } else { // tango
-                iframeContainer = document.querySelector('.kinobox__iframeWrapper');
-                menuItems = document.querySelectorAll('.kinobox__menuItem');
-            }
+            const { iframeContainer, menuItems } = getKinoboxElements(type);
             if (iframeContainer && menuItems.length > 0) {
                 clearInterval(interval);
                 rebuildMirror();
@@ -1077,44 +993,31 @@
     }
 
     function startPersistentObserver(type) {
-        const observer = new MutationObserver(() => {
-            let iframeContainer, menuItems;
-            if (type === 'gamma') {
-                iframeContainer = document.querySelector('.kinobox_iframe_container');
-                menuItems = document.querySelectorAll('.kinobox_menu li');
-                if (!iframeContainer || menuItems.length === 0) {
-                    iframeContainer = document.querySelector('.kinobox__iframeWrapper');
-                    menuItems = document.querySelectorAll('.kinobox__menuItem');
-                }
-            } else {
-                iframeContainer = document.querySelector('.kinobox__iframeWrapper');
-                menuItems = document.querySelectorAll('.kinobox__menuItem');
-            }
+        let observer;
+        let fallbackTimer = null;
+
+        const check = () => {
+            const { iframeContainer, menuItems } = getKinoboxElements(type);
             if (iframeContainer && menuItems.length > 0) {
-                observer.disconnect();
+                if (observer) observer.disconnect();
+                if (fallbackTimer) clearTimeout(fallbackTimer);
                 rebuildMirror();
             }
-        });
+        };
+
+        observer = new MutationObserver(check);
         observer.observe(document.documentElement, { childList: true, subtree: true });
-        let iframeContainer, menuItems;
-        if (type === 'gamma') {
-            iframeContainer = document.querySelector('.kinobox_iframe_container');
-            menuItems = document.querySelectorAll('.kinobox_menu li');
-            if (!iframeContainer || menuItems.length === 0) {
-                iframeContainer = document.querySelector('.kinobox__iframeWrapper');
-                menuItems = document.querySelectorAll('.kinobox__menuItem');
-            }
-        } else {
-            iframeContainer = document.querySelector('.kinobox__iframeWrapper');
-            menuItems = document.querySelectorAll('.kinobox__menuItem');
-        }
-        if (iframeContainer && menuItems.length > 0) {
+
+        // Если через 10 секунд не найдено, показываем страницу и прекращаем наблюдение
+        fallbackTimer = setTimeout(() => {
             observer.disconnect();
-            rebuildMirror();
-        }
+            showBody();
+        }, 10000);
+
+        check();
     }
 
-    // ---------- UI Кинопоиска ----------
+    // ─── UI Кинопоиска ───
     function removeOldUI() {
         document.getElementById('kp-btn-container')?.remove();
         document.getElementById('kp-settings-panel')?.remove();
@@ -1217,7 +1120,7 @@
     }
 
     function createUI() {
-        if (isCreatingUI) return;          // если уже создаётся – выходим
+        if (isCreatingUI) return;
         isCreatingUI = true;
         try {
             if (currentUIUrl === window.location.href && document.querySelector('.kp-redirect-embed-group, #kp-btn-container')) return;
@@ -1608,7 +1511,7 @@
     }
 
     // ========== ФУНКЦИИ ЗАКЛАДОК ==========
-    window.getCurrentMovieData = function() {
+    function getCurrentMovieData() {
         const url = window.location.href;
         const idMatch = url.match(/\/(film|series|tv)\/(\d+)/);
         const kpId = idMatch ? idMatch[2] : null;
@@ -1641,7 +1544,7 @@
         genres = Array.from(genreLinks).map(a => a.textContent.trim()).join(', ');
 
         return { id: kpId, title, year, posterUrl, rating, genres, addedAt: Date.now() };
-    };
+    }
 
     function getSavedMovies() { try { return JSON.parse(localStorage.getItem(CONFIG.SAVED_STORAGE_KEY) || '[]'); } catch(e) { return []; } }
     function saveMovie(movie) { const movies = getSavedMovies(); if (!movies.some(m => m.id === movie.id)) { movies.push(movie); localStorage.setItem(CONFIG.SAVED_STORAGE_KEY, JSON.stringify(movies)); return true; } return false; }
@@ -1811,7 +1714,7 @@
         themeWaitActive = true;
 
         const startTime = Date.now();
-        const maxWait = 3000; // 3 секунды максимум
+        const maxWait = 3000;
 
         function check() {
             const btn = document.querySelector('button[class*="style_buttonLight__"], button[class*="style_buttonDark__"]');
@@ -1820,7 +1723,7 @@
                 createUI();
             } else if (Date.now() - startTime > maxWait) {
                 themeWaitActive = false;
-                createUI(); // fallback на системную тему
+                createUI();
             } else {
                 requestAnimationFrame(check);
             }
@@ -1836,7 +1739,10 @@
             if (isRebuildMirror && !isBlockedPage) {
                 waitForRebuild();
             } else if (isMirrorDomain() && !isBlockedPage) {
-                cleanPage();
+                if (isHabster) {
+                    showBody();
+                }
+                // Ничего не делаем для простых зеркал – CSS уже скрыл лишнее
             } else if (!isBlockedPage) {
                 themeWaitActive = false;
                 waitForThemeAndCreateUI();
@@ -1858,7 +1764,10 @@
         if (isRebuildMirror) {
             waitForRebuild();
         } else if (isMirrorDomain()) {
-            cleanPage();
+            if (isHabster) {
+                showBody();
+            }
+            // Для habster просто показываем, остальное скрыто CSS
         } else {
             startKinopoiskUI();
         }
