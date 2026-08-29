@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kinopoisk-free
 // @namespace    http://tampermonkey.net/
-// @version      7.4.7
+// @version      7.4.8
 // @description  Бесплатный просмотр фильмом и сериалов на сайте kinopoisk.ru
 // @author       Nyanta
 // @icon         https://www.kinopoisk.ru/favicon.ico
@@ -13,6 +13,8 @@
 // @match        https://www.kinopoisk.ws/*
 // @match        https://kinopoisk.film/*
 // @match        https://kinokino.vip/*
+// @match        https://brogiro.cfd/*
+// @match        https://*.brogiro.cfd/*
 // @match        https://flcksbr.top/*
 // @match        https://sspoisk.ru/*
 // @match        https://*.sspoisk.ru/*
@@ -64,7 +66,7 @@
             { domain: 'habster.sbs',    name: 'Альфа', domains: ['habster.sbs'] },
             { domain: 'www.kinopoisk.ws',   name: 'Браво', domains: ['www.kinopoisk.ws'] },
             { domain: 'kinopoisk.film', name: 'Гамма', domains: ['kinopoisk.film'] },
-            { domain: 'kinokino.vip',   name: 'Дельта', domains: ['kinokino.vip'] },
+            { domain: 'brogiro.cfd',   name: 'Дельта', domains: ['brogiro.cfd', 'kinokino.vip'] },
             { domain: 'flcksbr.top',    name: 'Танго', domains: ['flcksbr.top'] },
             { domain: 'www.gromfaer.top', name: 'Чарли', domains: ['www.gromfaer.top', 'gromfaer.top', 'sspoisk.ru', 'www.sspoisk.ru'] }
         ],
