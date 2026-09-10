@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         kinopoisk-free
 // @namespace    http://tampermonkey.net/
-// @version      7.4.9
+// @version      7.5.0
 // @description  Бесплатный просмотр фильмом и сериалов на сайте kinopoisk.ru
-// @author       Nyanta
+// @author       Murckich
 // @icon         https://www.kinopoisk.ru/favicon.ico
 // @match        https://www.kinopoisk.ru/*
 // @match        http://www.kinopoisk.ru/*
@@ -13,6 +13,12 @@
 // @match        https://www.kinopoisk.ws/*
 // @match        https://fbfind.online/*
 // @match        https://*.fbfind.online/*
+// @match        https://fbfind.life/*
+// @match        https://*.fbfind.life/*
+// @match        https://fbfind.top/*
+// @match        https://*.fbfind.top/*
+// @match        https://villybizy.online/*
+// @match        https://*.villybizy.online/*
 // @match        https://kinopoisk.film/*
 // @match        https://kinokino.vip/*
 // @match        https://brogiro.cfd/*
@@ -22,16 +28,6 @@
 // @match        https://*.sspoisk.ru/*
 // @match        https://gromfaer.top/*
 // @match        https://*.gromfaer.top/*
-// @match        https://nonchik.com/*
-// @match        https://*.nonchik.com/*
-// @match        https://fbfind.life/*
-// @match        https://*.fbfind.life/*
-// @match        https://fbfind.top/*
-// @match        https://*.fbfind.top/*
-// @match        https://villybizy.online/*
-// @match        https://*.villybizy.online/*
-// @match        https://troutcdn.site/*
-// @match        https://*.troutcdn.site/*
 // @downloadURL  https://raw.githubusercontent.com/murckich/kinopoisk-free/main/kinopoisk-free.user.js
 // @updateURL    https://raw.githubusercontent.com/murckich/kinopoisk-free/main/kinopoisk-free.user.js
 // @grant        none
@@ -40,7 +36,7 @@
 // ==/UserScript==
 
 /*
- * Copyright 2026 Nyanta
+ * Copyright 2026 Murckich
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -64,8 +60,8 @@
         CHANNELS: [
             { domain: 'habster.sbs',    name: 'Альфа', domains: ['habster.sbs'] },
             { domain: 'www.kinopoisk.ws',   name: 'Браво', domains: ['www.kinopoisk.ws'] },
-            { domain: 'fbfind.online',  name: 'Гамма', domains: ['fbfind.online', 'kinopoisk.film'] },
-            { domain: 'brogiro.cfd',   name: 'Дельта', domains: ['brogiro.cfd', 'kinokino.vip'] },
+            { domain: 'fbfind.online',  name: 'Гамма', domains: ['fbfind.online', 'fbfind.top', 'fbfind.life', 'kinopoisk.film'] },
+            { domain: 'brogiro.cfd',   name: 'Дельта', domains: ['brogiro.cfd', 'kinokino.vip', 'villybizy.online'] },
             { domain: 'flcksbr.top',    name: 'Танго', domains: ['flcksbr.top'] },
             { domain: 'www.gromfaer.top', name: 'Чарли', domains: ['www.gromfaer.top', 'gromfaer.top', 'sspoisk.ru', 'www.sspoisk.ru'] }
         ],
@@ -237,7 +233,7 @@
     const isBlockedPage = /^\/blocked\.html(\/|$)/.test(window.location.pathname);
     const isHabster = host === 'habster.sbs' || host.endsWith('.habster.sbs');
     const isRebuildMirror = (
-        host.match(/(fbfind\.(life|top|online)|villybizy\.online|flcksbr\.top|nonchik\.com|troutcdn\.site)/) ||
+        host.match(/(fbfind\.(life|top|online)|villybizy\.online|flcksbr\.top)/) ||
         (matchChannelDomain(host) && !isHabster)
     );
 
@@ -261,7 +257,7 @@
 
         if (h.match(/(fbfind\.(life|top|online)|villybizy\.online|flcksbr\.top)/)) {
             rules.push('#tgWrapper, .brand, .topAdPad, #TopAdMb, .adDown, #instructionModal, #tgMain, img[src*="tgimg.png"]');
-        } else if (h.match(/nonchik\.com|kinopoisk\.ws|troutcdn\.site/)) {
+        } else if (h.match(/kinopoisk\.ws/)) {
             rules.push('.site-header,.social,.footer,.disclaimer,.spacer-md,#movie_video,#name,.h2');
         } else if (matchChannelDomain(h)) {
             rules.push('.header,.tg-banner,#unreleased-notice,ins,.share-bar,.footer,.info-tabs-bar,#panel-comments,.cw,#rkn-stub,#tgMain,img[src*="tgimg.png"]');
@@ -790,10 +786,11 @@
     }
     initBlockedPageObserver();
 
+    // Все зеркала кроме Браво используют одинаковый формат kinobox.
+    // Универсальный поиск: сначала новые классы, потом старые.
     function getMirrorTypeForRebuild() {
         const h = window.location.hostname;
-        if (h.includes('flcksbr.top')) return 'tango';
-        if (h.includes('nonchik.com') || h.includes('kinopoisk.ws') || h.includes('troutcdn.site')) return 'bravo';
+        if (h.includes('kinopoisk.ws')) return 'bravo';
         return 'gamma';
     }
 
@@ -810,23 +807,17 @@
         }
     }
 
-    function getKinoboxElements(type) {
-        const isTango = type === 'tango';
-        let iframeContainer, menuItems, activeClass;
+    // Универсальный поиск элементов kinobox — сначала новые классы, потом старые.
+    // Работает для всех зеркал с kinobox (бывшие gamma и tango).
+    function getKinoboxElements() {
+        let iframeContainer = document.querySelector('.kinobox_iframe_container');
+        let menuItems = [...document.querySelectorAll('.kinobox_menu li')];
+        let activeClass = 'kinobox_menu_active';
 
-        if (isTango) {
+        if (!iframeContainer || menuItems.length === 0) {
             iframeContainer = document.querySelector('.kinobox__iframeWrapper');
             menuItems = [...document.querySelectorAll('.kinobox__menuItem')];
             activeClass = 'kinobox__menuItem--active';
-        } else {
-            iframeContainer = document.querySelector('.kinobox_iframe_container');
-            menuItems = [...document.querySelectorAll('.kinobox_menu li')];
-            activeClass = 'kinobox_menu_active';
-            if (!iframeContainer || menuItems.length === 0) {
-                iframeContainer = document.querySelector('.kinobox__iframeWrapper');
-                menuItems = [...document.querySelectorAll('.kinobox__menuItem')];
-                activeClass = 'kinobox__menuItem--active';
-            }
         }
 
         return { iframeContainer, menuItems, activeClass };
@@ -933,7 +924,7 @@
             return;
         }
 
-        const { iframeContainer, menuItems, activeClass } = getKinoboxElements(type);
+        const { iframeContainer, menuItems, activeClass } = getKinoboxElements();
         const kpId = document.querySelector('.kinobox[data-kinopoisk]')?.getAttribute('data-kinopoisk') || '0';
         const movie = getMovieInfo();
         buildKinoboxPage(iframeContainer, menuItems, kpId, movie, activeClass);
@@ -1059,23 +1050,23 @@
         let attempts = 0;
         const maxAttempts = 60;
         const interval = setInterval(() => {
-            const { iframeContainer, menuItems } = getKinoboxElements(type);
+            const { iframeContainer, menuItems } = getKinoboxElements();
             if (iframeContainer && menuItems.length > 0) {
                 clearInterval(interval);
                 rebuildMirror();
             } else if (++attempts >= maxAttempts) {
                 clearInterval(interval);
-                startPersistentObserver(type);
+                startPersistentObserver();
             }
         }, 200);
     }
 
-    function startPersistentObserver(type) {
+    function startPersistentObserver() {
         let observer;
         let fallbackTimer = null;
 
         const check = () => {
-            const { iframeContainer, menuItems } = getKinoboxElements(type);
+            const { iframeContainer, menuItems } = getKinoboxElements();
             if (iframeContainer && menuItems.length > 0) {
                 if (observer) observer.disconnect();
                 if (fallbackTimer) clearTimeout(fallbackTimer);
