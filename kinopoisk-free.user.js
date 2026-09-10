@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kinopoisk-free
 // @namespace    http://tampermonkey.net/
-// @version      7.4.8
+// @version      7.4.9
 // @description  Бесплатный просмотр фильмом и сериалов на сайте kinopoisk.ru
 // @author       Nyanta
 // @icon         https://www.kinopoisk.ru/favicon.ico
@@ -11,6 +11,8 @@
 // @match        http://kinopoisk.ru/*
 // @match        https://habster.sbs/*
 // @match        https://www.kinopoisk.ws/*
+// @match        https://fbfind.online/*
+// @match        https://*.fbfind.online/*
 // @match        https://kinopoisk.film/*
 // @match        https://kinokino.vip/*
 // @match        https://brogiro.cfd/*
@@ -56,22 +58,21 @@
 (function() {
     'use strict';
 
-    // ═══════════════════════════════════════════════════════════════
-    // КОНФИГУРАЦИЯ
-    // ═══════════════════════════════════════════════════════════════
     const CONFIG = {
         STORAGE_KEY: 'kpRedirectSettings',
         DEFAULT_DOMAIN: 'habster.sbs',
         CHANNELS: [
             { domain: 'habster.sbs',    name: 'Альфа', domains: ['habster.sbs'] },
             { domain: 'www.kinopoisk.ws',   name: 'Браво', domains: ['www.kinopoisk.ws'] },
-            { domain: 'kinopoisk.film', name: 'Гамма', domains: ['kinopoisk.film'] },
+            { domain: 'fbfind.online',  name: 'Гамма', domains: ['fbfind.online', 'kinopoisk.film'] },
             { domain: 'brogiro.cfd',   name: 'Дельта', domains: ['brogiro.cfd', 'kinokino.vip'] },
             { domain: 'flcksbr.top',    name: 'Танго', domains: ['flcksbr.top'] },
             { domain: 'www.gromfaer.top', name: 'Чарли', domains: ['www.gromfaer.top', 'gromfaer.top', 'sspoisk.ru', 'www.sspoisk.ru'] }
         ],
         BTN_SIZE: 52,
         SETTINGS_BTN_SIZE: 36,
+        PHONE_BTN_SIZE: 48,
+        PHONE_SETTINGS_BTN_SIZE: 42,
         POSITIONS: {
             'left-top':      { left: true,  vertical: 'top',    arrow: '🢄' },
             'left-middle':   { left: true,  vertical: 'middle', arrow: '🢀' },
@@ -80,13 +81,16 @@
             'right-middle':  { left: false, vertical: 'middle', arrow: '🢂' },
             'right-bottom':  { left: false, vertical: 'bottom', arrow: '🢆' }
         },
+        PHONE_POSITIONS: ['left-middle', 'left-bottom', 'right-middle', 'right-bottom'],
         EMBED_SELECTOR: '.styles_buttonsContainer__DCKJk',
         FALLBACK_SELECTORS: [
             '[data-test-id="ContentActions"]',
             '[data-tid="ContentActions"]',
+            '[data-test-id="ContentActionsTransition"]',
             '.film-header__buttons',
             '[class*="buttonsContainer"]',
-            '[class*="Buttons_container"]'
+            '[class*="Buttons_container"]',
+            '[class*="actionButtons"]'
         ],
         LIGHT: {
             EMBED_MAIN_COLOR: '#1a1a1a',
@@ -128,13 +132,41 @@
         PANEL_OFFSET_X: 8,
         PANEL_MIN_WIDTH: '160px',
         PANEL_FONT_SIZE: '13px',
+        PHONE_PANEL_FONT_SIZE: '14px',
         EMBED_TIMEOUT: 5000,
         KP_HOME_URL: 'https://www.kinopoisk.ru',
         BUTTONS_GAP: '6px',
-        SAVED_STORAGE_KEY: 'kpSavedMovies'
+        SAVED_STORAGE_KEY: 'kpSavedMovies',
+        SHARE_QUERY_KEY: 'kp-import',
+        SHARE_HASH_PREFIX: 'kp-import=',
+        POSTER_TEMPLATE: 'https://st.kp.yandex.net/images/film_iphone/iphone360_{id}.jpg',
+        QR_SERVICE_URL: 'https://api.qrserver.com/v1/create-qr-code/',
+        QR_MAX_LENGTH: 2900,
+        SAVED_PANEL_WIDTH: '260px',
+        SAVED_LIST_MAX_HEIGHT: '208px',
+        PHONE_DELETE_ZONE_WIDTH: '35px',
+        DESKTOP_DELETE_ZONE_WIDTH: '22px',
+        THEME_CACHE_TTL: 1000,
+        MOVIE_DATA_CACHE_TTL: 30000
     };
 
-    // Функция для внедрения стилей, когда <head> готов
+    const isTouchDevice = (() => {
+        try {
+            return window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+        } catch (e) {
+            return 'ontouchstart' in window && window.innerWidth <= 1024;
+        }
+    })();
+    const screenMin = Math.min(
+        (window.screen && window.screen.width) || 0,
+        (window.screen && window.screen.height) || 0
+    );
+    const isPhone = isTouchDevice && screenMin > 0 && screenMin <= 600;
+    const isTablet = isTouchDevice && !isPhone;
+
+    let _darkThemeCache = { value: null, ts: 0 };
+    let _movieDataCache = { id: null, data: null, ts: 0 };
+
     function injectStyleWhenHeadReady(id, css) {
         const style = document.createElement('style');
         style.id = id;
@@ -152,15 +184,33 @@
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // ОПРЕДЕЛЕНИЕ ТЕМЫ
-    // ═══════════════════════════════════════════════════════════════
     function isDarkTheme() {
+        if (isPhone) return true;
+
+        const now = Date.now();
+        if (_darkThemeCache.value !== null && (now - _darkThemeCache.ts) < CONFIG.THEME_CACHE_TTL) {
+            return _darkThemeCache.value;
+        }
+
+        let result;
         const darkBtn = document.querySelector('button[class*="style_buttonDark__"]');
-        if (darkBtn && darkBtn.offsetParent !== null) return true;
-        const lightBtn = document.querySelector('button[class*="style_buttonLight__"]');
-        if (lightBtn && lightBtn.offsetParent !== null) return false;
-        return window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (darkBtn && darkBtn.offsetParent !== null) {
+            result = true;
+        } else {
+            const lightBtn = document.querySelector('button[class*="style_buttonLight__"]');
+            if (lightBtn && lightBtn.offsetParent !== null) {
+                result = false;
+            } else {
+                result = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            }
+        }
+
+        _darkThemeCache = { value: result, ts: now };
+        return result;
+    }
+
+    function invalidateThemeCache() {
+        _darkThemeCache = { value: null, ts: 0 };
     }
 
     function getThemeColors() {
@@ -175,29 +225,28 @@
         return isDarkTheme() ? CONFIG.PANEL_TEXT_DARK : CONFIG.PANEL_TEXT_LIGHT;
     }
 
+    function getPanelFontSize() {
+        return isPhone ? CONFIG.PHONE_PANEL_FONT_SIZE : CONFIG.PANEL_FONT_SIZE;
+    }
+
     function matchChannelDomain(hostname) {
         return CONFIG.CHANNELS.some(c => c.domains.some(d => hostname.includes(d)));
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // ОПРЕДЕЛЕНИЯ ТИПА СТРАНИЦЫ
-    // ═══════════════════════════════════════════════════════════════
     const host = window.location.hostname;
     const isBlockedPage = /^\/blocked\.html(\/|$)/.test(window.location.pathname);
     const isHabster = host === 'habster.sbs' || host.endsWith('.habster.sbs');
     const isRebuildMirror = (
-        host.match(/(fbfind\.(life|top)|villybizy\.online|flcksbr\.top|nonchik\.com|troutcdn\.site)/) ||
+        host.match(/(fbfind\.(life|top|online)|villybizy\.online|flcksbr\.top|nonchik\.com|troutcdn\.site)/) ||
         (matchChannelDomain(host) && !isHabster)
     );
 
-    // ─── Раннее скрытие body (для зеркал, которые будем перестраивать) ───
     if (isRebuildMirror || isBlockedPage) {
         injectStyleWhenHeadReady('kp-hide-body-early', 'body { visibility: hidden !important; }');
         document.documentElement.style.visibility = 'hidden';
         document.documentElement.style.background = '#0b0d14';
     }
 
-    // ─── Ранний фон ───
     if (isRebuildMirror) {
         injectStyleWhenHeadReady('kp-base-bg-mirror', 'html, body { background: #0b0d14 !important; }');
     }
@@ -206,12 +255,11 @@
         injectStyleWhenHeadReady('kp-base-bg', 'html, body { background: #0b0d14 !important; }');
     }
 
-    // ─── Ранняя очистка CSS ───
     function getEarlyCleanCSS() {
         const h = window.location.hostname;
         const rules = [];
 
-        if (h.match(/(fbfind\.(life|top)|villybizy\.online|flcksbr\.top)/)) {
+        if (h.match(/(fbfind\.(life|top|online)|villybizy\.online|flcksbr\.top)/)) {
             rules.push('#tgWrapper, .brand, .topAdPad, #TopAdMb, .adDown, #instructionModal, #tgMain, img[src*="tgimg.png"]');
         } else if (h.match(/nonchik\.com|kinopoisk\.ws|troutcdn\.site/)) {
             rules.push('.site-header,.social,.footer,.disclaimer,.spacer-md,#movie_video,#name,.h2');
@@ -231,7 +279,6 @@
             injectStyleWhenHeadReady('kp-early-clean', css);
         }
 
-        // Скрытие tgMain для зеркал (если появятся)
         if (isRebuildMirror) {
             const hideTgMain = () => {
                 const el = document.getElementById('tgMain');
@@ -245,7 +292,6 @@
                 });
             };
             hideTgMain();
-            // Debounce
             let tgTimer = null;
             new MutationObserver(() => {
                 if (tgTimer) clearTimeout(tgTimer);
@@ -256,26 +302,22 @@
 
     injectEarlyCleanCSS();
 
-    // Показ страницы после перестройки или при ошибке
     function showBody() {
         document.documentElement.style.visibility = '';
         const ids = ['kp-hide-body-early', 'kp-base-bg-mirror', 'kp-base-bg', 'kp-hide-body'];
         ids.forEach(id => document.getElementById(id)?.remove());
     }
 
-    // Для простых зеркал (habster) показываем страницу сразу
     function releaseBodyForSimpleMirrors() {
         if (isBlockedPage) return;
         if (isHabster) {
             showBody();
         } else if (!isRebuildMirror && matchChannelDomain(host)) {
-            // Остальные простые зеркала (если такие будут)
             showBody();
         }
     }
     releaseBodyForSimpleMirrors();
 
-    // ─── Единый стиль для всех каналов ───
     const ALFA_STYLES_GAMMA_TANGO = `
         :root {
             --bg: #0b0d14;
@@ -555,7 +597,6 @@
         #licntBF6C, span[style="display: none;"] { display: none !important; }
     `;
 
-    // ─── Настройки ───
     let settings = loadSettings();
     let currentUIUrl = null;
     let embedObserver = null;
@@ -575,15 +616,19 @@
                 position: 'fixed', bottom: '30px', left: '50%', transform: 'translateX(-50%)',
                 background: '#2a2a2e', color: '#f0f0f5', padding: '10px 20px', borderRadius: '8px',
                 border: '1px solid #4b4b52', boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-                zIndex: '1000001', fontFamily: 'Segoe UI, Arial, sans-serif', fontSize: '14px',
-                transition: 'opacity 0.3s', opacity: '0', pointerEvents: 'none'
+                zIndex: '1000003', fontFamily: 'Segoe UI, Arial, sans-serif', fontSize: '14px',
+                transition: 'opacity 0.3s', opacity: '0', pointerEvents: 'none',
+                maxWidth: 'calc(100vw - 32px)', boxSizing: 'border-box', textAlign: 'center'
             });
+        }
+        if (!toastElement.parentNode && document.body) {
             document.body.appendChild(toastElement);
         }
         return toastElement;
     }
 
     function showToast(message) {
+        if (!document.body) return;
         const toast = getToast();
         toast.textContent = message;
         toast.style.opacity = '1';
@@ -593,7 +638,30 @@
         }, 2000);
     }
 
-    // Глобальный обработчик закрытия панелей и селектов
+    function whenReady(fn) {
+        if (document.body) {
+            fn();
+        } else {
+            const obs = new MutationObserver(() => {
+                if (document.body) {
+                    obs.disconnect();
+                    fn();
+                }
+            });
+            obs.observe(document.documentElement, { childList: true });
+        }
+    }
+
+    function escapeHtml(str) {
+        if (str == null) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     document.addEventListener('click', function(e) {
         const settingsPanel = document.getElementById('kp-settings-panel');
         const savedPanel = document.getElementById('kp-saved-panel');
@@ -608,10 +676,15 @@
         if (savedPanel && savedPanel.style.display === 'flex') {
             if (!saveBtn?.contains(e.target) && !savedPanel.contains(e.target)) {
                 savedPanel.style.display = 'none';
+                const shareView = document.getElementById('kp-share-view');
+                const listView = document.getElementById('kp-saved-list');
+                if (shareView && listView && shareView.style.display !== 'none') {
+                    shareView.style.display = 'none';
+                    listView.style.display = 'flex';
+                }
             }
         }
 
-        // Закрытие открытого селекта плеера
         const openSelect = document.querySelector('.kp-select.open');
         if (openSelect && !openSelect.contains(e.target)) {
             openSelect.classList.remove('open');
@@ -623,19 +696,26 @@
             const raw = localStorage.getItem(CONFIG.STORAGE_KEY);
             if (raw) {
                 const parsed = JSON.parse(raw);
-                return {
-                    targetDomain: parsed.targetDomain || CONFIG.DEFAULT_DOMAIN,
-                    btnPosition: parsed.btnPosition || 'left',
-                    btnVertical: parsed.btnVertical || 'middle',
-                    embedMode: 'embedMode' in parsed ? parsed.embedMode : true
-                };
+                let targetDomain = parsed.targetDomain || CONFIG.DEFAULT_DOMAIN;
+                let btnPosition = parsed.btnPosition || 'left';
+                let btnVertical = parsed.btnVertical || 'middle';
+                let embedMode = 'embedMode' in parsed ? parsed.embedMode : true;
+
+                if (isPhone) {
+                    embedMode = false;
+                    if (btnVertical === 'top') {
+                        btnVertical = 'middle';
+                    }
+                }
+
+                return { targetDomain, btnPosition, btnVertical, embedMode };
             }
         } catch (e) {}
         return {
             targetDomain: CONFIG.DEFAULT_DOMAIN,
             btnPosition: 'left',
             btnVertical: 'middle',
-            embedMode: true
+            embedMode: !isPhone
         };
     }
 
@@ -661,7 +741,6 @@
         return matchChannelDomain(host);
     }
 
-    // ─── Обработка страницы «Контент удалён» ───
     function applyBlockedStyles() {
         if (!document.getElementById('shell')) return;
         injectStyleWhenHeadReady('kp-blocked-style', BLOCKED_PAGE_STYLES);
@@ -711,7 +790,6 @@
     }
     initBlockedPageObserver();
 
-    // ─── Функции перестройки зеркал ───
     function getMirrorTypeForRebuild() {
         const h = window.location.hostname;
         if (h.includes('flcksbr.top')) return 'tango';
@@ -732,7 +810,6 @@
         }
     }
 
-    // Вспомогательная функция для получения элементов kinobox в зависимости от типа зеркала
     function getKinoboxElements(type) {
         const isTango = type === 'tango';
         let iframeContainer, menuItems, activeClass;
@@ -755,7 +832,6 @@
         return { iframeContainer, menuItems, activeClass };
     }
 
-    // Универсальный билдер страницы для Gamma/Tango
     function buildKinoboxPage(iframeContainer, menuItems, kpId, movie, activeClass) {
         if (!iframeContainer || menuItems.length === 0) {
             showBody();
@@ -1010,7 +1086,6 @@
         observer = new MutationObserver(check);
         observer.observe(document.documentElement, { childList: true, subtree: true });
 
-        // Если через 10 секунд не найдено, показываем страницу и прекращаем наблюдение
         fallbackTimer = setTimeout(() => {
             observer.disconnect();
             showBody();
@@ -1019,7 +1094,6 @@
         check();
     }
 
-    // ─── UI Кинопоиска ───
     function removeOldUI() {
         document.getElementById('kp-btn-container')?.remove();
         document.getElementById('kp-settings-panel')?.remove();
@@ -1106,17 +1180,17 @@
 
     function startGlobalRestoreObserver() {
         if (embedObserver) embedObserver.disconnect();
+        let debounceTimer = null;
         embedObserver = new MutationObserver(() => {
             if (!isFilmOrSeriesPage() || !settings.embedMode) return;
-            const target = findEmbedTarget();
-            if (target && isContainerReady(target) && !document.querySelector('.kp-redirect-embed-group')) {
-                if (embedRestoreTimeout) clearTimeout(embedRestoreTimeout);
-                embedRestoreTimeout = setTimeout(() => {
-                    if (findEmbedTarget() && isContainerReady(findEmbedTarget()) && !document.querySelector('.kp-redirect-embed-group') && settings.embedMode) {
-                        buildEmbeddedUI(target);
-                    }
-                }, 50);
-            }
+            if (debounceTimer) return;
+            debounceTimer = setTimeout(() => {
+                debounceTimer = null;
+                const target = findEmbedTarget();
+                if (target && isContainerReady(target) && !document.querySelector('.kp-redirect-embed-group')) {
+                    buildEmbeddedUI(target);
+                }
+            }, 100);
         });
         embedObserver.observe(document.body, { childList: true, subtree: true });
     }
@@ -1129,7 +1203,8 @@
             currentUIUrl = window.location.href;
             removeOldUI();
             if (!isFilmOrSeriesPage()) return;
-            if (settings.embedMode) {
+
+            if (!isPhone && settings.embedMode) {
                 startEmbedMode();
             } else {
                 buildFixedUI();
@@ -1139,7 +1214,123 @@
         }
     }
 
-    // ========== ВСТРОЕННЫЙ РЕЖИМ (embed) ==========
+    function positionEmbedPanel(panel) {
+        panel.style.top = '100%';
+        panel.style.bottom = 'auto';
+        panel.style.left = '0';
+        panel.style.right = 'auto';
+        panel.style.marginTop = CONFIG.BUTTONS_GAP;
+        panel.style.marginLeft = '0';
+        panel.style.marginRight = '0';
+        panel.style.marginBottom = '0';
+
+        requestAnimationFrame(() => {
+            const rect = panel.getBoundingClientRect();
+            if (rect.right > window.innerWidth - 8) {
+                panel.style.left = 'auto';
+                panel.style.right = '0';
+            } else {
+                panel.style.left = '0';
+                panel.style.right = 'auto';
+            }
+        });
+    }
+
+    function positionFixedPanel(panel) {
+        panel.style.top = '0';
+        panel.style.bottom = 'auto';
+        panel.style.left = 'auto';
+        panel.style.right = 'auto';
+        panel.style.margin = '0';
+
+        const horiz = settings.btnPosition;
+        let openLeft = (horiz === 'right');
+
+        if (openLeft) {
+            panel.style.right = '100%';
+            panel.style.marginRight = CONFIG.BUTTONS_GAP;
+        } else {
+            panel.style.left = '100%';
+            panel.style.marginLeft = CONFIG.BUTTONS_GAP;
+        }
+
+        requestAnimationFrame(() => {
+            const rect = panel.getBoundingClientRect();
+            const vw = window.innerWidth;
+            const vh = window.innerHeight;
+
+            if (rect.right > vw - 8 && !openLeft) {
+                panel.style.left = 'auto';
+                panel.style.right = '100%';
+                panel.style.marginLeft = '0';
+                panel.style.marginRight = CONFIG.BUTTONS_GAP;
+            }
+            if (rect.left < 8 && openLeft) {
+                panel.style.right = 'auto';
+                panel.style.left = '100%';
+                panel.style.marginRight = '0';
+                panel.style.marginLeft = CONFIG.BUTTONS_GAP;
+            }
+            if (rect.bottom > vh - 8) {
+                panel.style.top = 'auto';
+                panel.style.bottom = '0';
+            }
+
+            const rect2 = panel.getBoundingClientRect();
+            if (rect2.right > vw - 8) {
+                panel.style.maxWidth = 'calc(100vw - 24px)';
+            }
+        });
+    }
+
+    function redirectToChannel() {
+        const newUrl = window.location.href.replace(/\/\/[^\/]*kinopoisk\.ru/, `//${settings.targetDomain}`);
+        if (newUrl === window.location.href) showToast(`Вы уже на ${settings.targetDomain}`);
+        else window.location.href = newUrl;
+    }
+
+    function attachHoverBehaviour(group, buttons) {
+        group.addEventListener('mouseenter', () => {
+            buttons.forEach(b => {
+                b.style.opacity = '1';
+                b.style.pointerEvents = 'auto';
+                b.style.transform = 'scale(1)';
+            });
+        });
+        group.addEventListener('mouseleave', () => {
+            buttons.forEach(b => {
+                b.style.opacity = '0';
+                b.style.pointerEvents = 'none';
+                b.style.transform = 'scale(0.5)';
+            });
+        });
+    }
+
+    function attachPanelHandlers(settingsBtn, settingsPanel, saveBtn, savedPanel, positionFn) {
+        settingsBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (settingsPanel.style.display === 'flex') {
+                settingsPanel.style.display = 'none';
+            } else {
+                if (savedPanel.style.display === 'flex') savedPanel.style.display = 'none';
+                settingsPanel.style.display = 'flex';
+                positionFn(settingsPanel);
+            }
+        });
+
+        saveBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (savedPanel.style.display === 'flex') {
+                savedPanel.style.display = 'none';
+            } else {
+                if (settingsPanel.style.display === 'flex') settingsPanel.style.display = 'none';
+                renderSavedMovies(savedPanel);
+                savedPanel.style.display = 'flex';
+                positionFn(savedPanel);
+            }
+        });
+    }
+
     function buildEmbeddedUI(target) {
         target.querySelectorAll('.kp-redirect-embed-group').forEach(el => el.remove());
 
@@ -1151,21 +1342,13 @@
         const mainBtn = createButton('▶', null, CONFIG.BTN_SIZE,
             colors.EMBED_MAIN_COLOR, colors.EMBED_IDLE_BG, colors.HOVER_BG, colors.HOVER_TEXT_COLOR);
         mainBtn.title = `${getChannelName(settings.targetDomain)} канал`;
-        mainBtn.addEventListener('click', () => {
-            const newUrl = window.location.href.replace(/\/\/[^\/]*kinopoisk\.ru/, `//${settings.targetDomain}`);
-            if (newUrl === window.location.href) showToast(`Вы уже на ${settings.targetDomain}`);
-            else window.location.href = newUrl;
-        });
+        mainBtn.addEventListener('click', redirectToChannel);
 
         const settingsWrapper = document.createElement('div');
         settingsWrapper.style.cssText = 'position: relative; display: inline-flex; align-items: center;';
         const settingsBtn = createButton('⚙️', 'kp-settings-btn', CONFIG.SETTINGS_BTN_SIZE,
             colors.EMBED_SETTINGS_COLOR, colors.EMBED_IDLE_BG, colors.HOVER_BG, colors.HOVER_TEXT_COLOR);
         settingsBtn.title = 'Настройки';
-        settingsBtn.style.opacity = '0';
-        settingsBtn.style.pointerEvents = 'none';
-        settingsBtn.style.transform = 'scale(0.5)';
-        settingsBtn.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
         const settingsPanel = createSettingsPanel();
         settingsPanel.style.position = 'absolute';
         settingsPanel.style.top = '100%';
@@ -1179,10 +1362,6 @@
         const saveBtn = createButton('📑', 'kp-save-btn', CONFIG.SETTINGS_BTN_SIZE,
             colors.EMBED_SETTINGS_COLOR, colors.EMBED_IDLE_BG, colors.HOVER_BG, colors.HOVER_TEXT_COLOR);
         saveBtn.title = 'Закладки';
-        saveBtn.style.opacity = '0';
-        saveBtn.style.pointerEvents = 'none';
-        saveBtn.style.transform = 'scale(0.5)';
-        saveBtn.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
         const savedPanel = createSavedPanel();
         savedPanel.style.position = 'absolute';
         savedPanel.style.top = '100%';
@@ -1191,47 +1370,26 @@
         savedWrapper.appendChild(saveBtn);
         savedWrapper.appendChild(savedPanel);
 
-        group.addEventListener('mouseenter', () => {
-            settingsBtn.style.opacity = '1'; settingsBtn.style.pointerEvents = 'auto'; settingsBtn.style.transform = 'scale(1)';
-            saveBtn.style.opacity = '1'; saveBtn.style.pointerEvents = 'auto'; saveBtn.style.transform = 'scale(1)';
-        });
-        group.addEventListener('mouseleave', () => {
-            settingsBtn.style.opacity = '0'; settingsBtn.style.pointerEvents = 'none'; settingsBtn.style.transform = 'scale(0.5)';
-            saveBtn.style.opacity = '0'; saveBtn.style.pointerEvents = 'none'; saveBtn.style.transform = 'scale(0.5)';
-        });
+        if (isTouchDevice) {
+            settingsBtn.style.opacity = '1';
+            settingsBtn.style.pointerEvents = 'auto';
+            settingsBtn.style.transform = 'scale(1)';
+            saveBtn.style.opacity = '1';
+            saveBtn.style.pointerEvents = 'auto';
+            saveBtn.style.transform = 'scale(1)';
+        } else {
+            settingsBtn.style.opacity = '0';
+            settingsBtn.style.pointerEvents = 'none';
+            settingsBtn.style.transform = 'scale(0.5)';
+            settingsBtn.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+            saveBtn.style.opacity = '0';
+            saveBtn.style.pointerEvents = 'none';
+            saveBtn.style.transform = 'scale(0.5)';
+            saveBtn.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+            attachHoverBehaviour(group, [settingsBtn, saveBtn]);
+        }
 
-        settingsBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (settingsPanel.style.display === 'flex') {
-                settingsPanel.style.display = 'none';
-            } else {
-                if (savedPanel.style.display === 'flex') savedPanel.style.display = 'none';
-                settingsPanel.style.display = 'flex';
-                const panelRect = settingsPanel.getBoundingClientRect();
-                if (panelRect.right > window.innerWidth - 8) {
-                    settingsPanel.style.left = 'auto'; settingsPanel.style.right = '0';
-                } else {
-                    settingsPanel.style.left = '0'; settingsPanel.style.right = 'auto';
-                }
-            }
-        });
-
-        saveBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (savedPanel.style.display === 'flex') {
-                savedPanel.style.display = 'none';
-            } else {
-                if (settingsPanel.style.display === 'flex') settingsPanel.style.display = 'none';
-                renderSavedMovies(savedPanel);
-                savedPanel.style.display = 'flex';
-                const panelRect = savedPanel.getBoundingClientRect();
-                if (panelRect.right > window.innerWidth - 8) {
-                    savedPanel.style.left = 'auto'; savedPanel.style.right = '0';
-                } else {
-                    savedPanel.style.left = '0'; savedPanel.style.right = 'auto';
-                }
-            }
-        });
+        attachPanelHandlers(settingsBtn, settingsPanel, saveBtn, savedPanel, positionEmbedPanel);
 
         group.appendChild(mainBtn);
         group.appendChild(settingsWrapper);
@@ -1239,7 +1397,6 @@
         target.appendChild(group);
     }
 
-    // ========== ФИКСИРОВАННЫЙ РЕЖИМ (fixed) ==========
     function buildFixedUI() {
         const container = document.createElement('div');
         container.id = 'kp-btn-container';
@@ -1260,13 +1417,13 @@
             mainHoverBg = colors.HOVER_BG;
             mainHoverColor = colors.HOVER_TEXT_COLOR;
         }
-        const mainBtn = createButton('▶', 'kp-redirect-btn', CONFIG.BTN_SIZE, mainColor, mainIdleBg, mainHoverBg, mainHoverColor);
+
+        const mainSize = isPhone ? CONFIG.PHONE_BTN_SIZE : CONFIG.BTN_SIZE;
+        const settingsSize = isPhone ? CONFIG.PHONE_SETTINGS_BTN_SIZE : CONFIG.SETTINGS_BTN_SIZE;
+
+        const mainBtn = createButton('▶', 'kp-redirect-btn', mainSize, mainColor, mainIdleBg, mainHoverBg, mainHoverColor);
         mainBtn.title = `${getChannelName(settings.targetDomain)} канал`;
-        mainBtn.addEventListener('click', () => {
-            const newUrl = window.location.href.replace(/\/\/[^\/]*kinopoisk\.ru/, `//${settings.targetDomain}`);
-            if (newUrl === window.location.href) showToast(`Вы уже на ${settings.targetDomain}`);
-            else window.location.href = newUrl;
-        });
+        mainBtn.addEventListener('click', redirectToChannel);
 
         const secondaryIdleBg = colors.EMBED_IDLE_BG;
         const secondaryColor = colors.EMBED_SETTINGS_COLOR;
@@ -1275,100 +1432,47 @@
 
         const settingsWrapper = document.createElement('div');
         settingsWrapper.style.cssText = 'position: relative; display: inline-flex; align-items: center;';
-        const settingsBtn = createButton('⚙️', 'kp-settings-btn', CONFIG.SETTINGS_BTN_SIZE,
+        const settingsBtn = createButton('⚙️', 'kp-settings-btn', settingsSize,
             secondaryColor, secondaryIdleBg, secondaryHoverBg, secondaryHoverColor);
         settingsBtn.title = 'Настройки';
-        settingsBtn.style.opacity = '0';
-        settingsBtn.style.pointerEvents = 'none';
-        settingsBtn.style.transform = 'scale(0.5)';
-        settingsBtn.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
         const settingsPanel = createSettingsPanel();
         settingsPanel.style.position = 'absolute';
-        settingsPanel.style.top = 'auto';
-        settingsPanel.style.bottom = 'auto';
-        settingsPanel.style.left = 'auto';
-        settingsPanel.style.right = 'auto';
-        settingsPanel.style.margin = '0';
-        settingsWrapper.appendChild(settingsBtn);
-        settingsWrapper.appendChild(settingsPanel);
+        settingsPanel.style.top = '0';
 
         const savedWrapper = document.createElement('div');
         savedWrapper.style.cssText = 'position: relative; display: inline-flex; align-items: center;';
-        const saveBtn = createButton('📑', 'kp-save-btn', CONFIG.SETTINGS_BTN_SIZE,
+        const saveBtn = createButton('📑', 'kp-save-btn', settingsSize,
             secondaryColor, secondaryIdleBg, secondaryHoverBg, secondaryHoverColor);
         saveBtn.title = 'Закладки';
-        saveBtn.style.opacity = '0';
-        saveBtn.style.pointerEvents = 'none';
-        saveBtn.style.transform = 'scale(0.5)';
-        saveBtn.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
         const savedPanel = createSavedPanel();
         savedPanel.style.position = 'absolute';
-        savedPanel.style.top = 'auto';
-        savedPanel.style.bottom = 'auto';
-        savedPanel.style.left = 'auto';
-        savedPanel.style.right = 'auto';
-        savedPanel.style.margin = '0';
+        savedPanel.style.top = '0';
+
+        if (isTouchDevice) {
+            settingsBtn.style.opacity = '1';
+            settingsBtn.style.pointerEvents = 'auto';
+            settingsBtn.style.transform = 'scale(1)';
+            saveBtn.style.opacity = '1';
+            saveBtn.style.pointerEvents = 'auto';
+            saveBtn.style.transform = 'scale(1)';
+        } else {
+            settingsBtn.style.opacity = '0';
+            settingsBtn.style.pointerEvents = 'none';
+            settingsBtn.style.transform = 'scale(0.5)';
+            settingsBtn.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+            saveBtn.style.opacity = '0';
+            saveBtn.style.pointerEvents = 'none';
+            saveBtn.style.transform = 'scale(0.5)';
+            saveBtn.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+            attachHoverBehaviour(container, [settingsBtn, saveBtn]);
+        }
+
+        settingsWrapper.appendChild(settingsBtn);
+        settingsWrapper.appendChild(settingsPanel);
         savedWrapper.appendChild(saveBtn);
         savedWrapper.appendChild(savedPanel);
 
-        container.addEventListener('mouseenter', () => {
-            settingsBtn.style.opacity = '1'; settingsBtn.style.pointerEvents = 'auto'; settingsBtn.style.transform = 'scale(1)';
-            saveBtn.style.opacity = '1'; saveBtn.style.pointerEvents = 'auto'; saveBtn.style.transform = 'scale(1)';
-        });
-        container.addEventListener('mouseleave', () => {
-            settingsBtn.style.opacity = '0'; settingsBtn.style.pointerEvents = 'none'; settingsBtn.style.transform = 'scale(0.5)';
-            saveBtn.style.opacity = '0'; saveBtn.style.pointerEvents = 'none'; saveBtn.style.transform = 'scale(0.5)';
-        });
-
-        function positionFixedPanel(panel) {
-            const vert = settings.btnVertical;
-            const horiz = settings.btnPosition;
-            panel.style.top = 'auto'; panel.style.bottom = 'auto'; panel.style.left = 'auto'; panel.style.right = 'auto'; panel.style.margin = '0';
-            if (vert === 'bottom') {
-                panel.style.bottom = '0';
-                if (horiz === 'left') { panel.style.left = '100%'; panel.style.marginLeft = CONFIG.BUTTONS_GAP; }
-                else { panel.style.right = '100%'; panel.style.marginRight = CONFIG.BUTTONS_GAP; }
-            } else {
-                panel.style.top = '100%';
-                panel.style.marginTop = CONFIG.BUTTONS_GAP;
-                if (horiz === 'left') { panel.style.left = '0'; }
-                else { panel.style.right = '0'; }
-            }
-            const rect = panel.getBoundingClientRect();
-            const vw = window.innerWidth, vh = window.innerHeight;
-            if (rect.right > vw - 8) { panel.style.left = 'auto'; panel.style.right = '0'; }
-            if (rect.left < 8) { panel.style.left = '0'; panel.style.right = 'auto'; }
-            if (vert !== 'bottom' && rect.bottom > vh) {
-                panel.style.top = 'auto'; panel.style.bottom = '100%';
-                panel.style.marginTop = '0'; panel.style.marginBottom = CONFIG.BUTTONS_GAP;
-            }
-            if (vert === 'bottom' && rect.top < 0) {
-                panel.style.bottom = 'auto'; panel.style.top = '0';
-            }
-        }
-
-        settingsBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (settingsPanel.style.display === 'flex') {
-                settingsPanel.style.display = 'none';
-            } else {
-                if (savedPanel.style.display === 'flex') savedPanel.style.display = 'none';
-                settingsPanel.style.display = 'flex';
-                positionFixedPanel(settingsPanel);
-            }
-        });
-
-        saveBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (savedPanel.style.display === 'flex') {
-                savedPanel.style.display = 'none';
-            } else {
-                if (settingsPanel.style.display === 'flex') settingsPanel.style.display = 'none';
-                renderSavedMovies(savedPanel);
-                savedPanel.style.display = 'flex';
-                positionFixedPanel(savedPanel);
-            }
-        });
+        attachPanelHandlers(settingsBtn, settingsPanel, saveBtn, savedPanel, positionFixedPanel);
 
         container.appendChild(mainBtn);
         container.appendChild(settingsWrapper);
@@ -1377,7 +1481,12 @@
     }
 
     function applyFixedPosition(container) {
-        const posKey = `${settings.btnPosition}-${settings.btnVertical}`;
+        let posKey = `${settings.btnPosition}-${settings.btnVertical}`;
+
+        if (isPhone && settings.btnVertical === 'top') {
+            posKey = `${settings.btnPosition}-middle`;
+        }
+
         const pos = CONFIG.POSITIONS[posKey] || CONFIG.POSITIONS['left-middle'];
         container.style.left = pos.left ? '12px' : 'auto';
         container.style.right = pos.left ? 'auto' : '12px';
@@ -1390,7 +1499,6 @@
         }
     }
 
-    // ========== Общие элементы ==========
     function createButton(text, id, size, color, idleBg, hoverBg, hoverTextColor) {
         const btn = document.createElement('div');
         if (id) btn.id = id;
@@ -1407,7 +1515,9 @@
             transition: 'background 0.2s, transform 0.2s, color 0.2s',
             fontFamily: 'Segoe UI, Arial, sans-serif',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            willChange: 'transform'
+            willChange: 'transform',
+            touchAction: 'manipulation',
+            WebkitTapHighlightColor: 'transparent'
         });
         btn.addEventListener('mouseenter', () => {
             btn.style.background = btn._hoverBg;
@@ -1433,69 +1543,101 @@
             borderRadius: CONFIG.PANEL_RADIUS,
             color: textColor,
             fontFamily: 'Segoe UI, Arial, sans-serif',
-            fontSize: CONFIG.PANEL_FONT_SIZE,
+            fontSize: getPanelFontSize(),
             minWidth: CONFIG.PANEL_MIN_WIDTH,
+            maxWidth: 'calc(100vw - 24px)',
             boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
             display: 'none',
             flexDirection: 'column',
             gap: CONFIG.PANEL_GAP,
             padding: CONFIG.PANEL_PADDING
         });
+
         const channelOptions = CONFIG.CHANNELS.map(ch =>
             `<option value="${ch.domain}" ${settings.targetDomain === ch.domain ? 'selected' : ''}>${ch.name}</option>`
         ).join('');
+
         const embedChecked = settings.embedMode ? 'checked' : '';
-        const positionOptions = Object.keys(CONFIG.POSITIONS).map(key => {
+
+        const positionsKeys = isPhone ? CONFIG.PHONE_POSITIONS : Object.keys(CONFIG.POSITIONS);
+        const positionOptions = positionsKeys.map(key => {
             const pos = CONFIG.POSITIONS[key];
             const sel = settings.btnPosition === (pos.left ? 'left' : 'right') && settings.btnVertical === pos.vertical ? 'selected' : '';
-            return `<option value="${key}" ${sel}>${pos.arrow}</option>`;
+            let label;
+            if (isPhone) {
+                const side = pos.left ? 'Слева' : 'Справа';
+                const vert = pos.vertical === 'middle' ? 'Центр' : 'Низ';
+                label = `${side} · ${vert}`;
+            } else {
+                label = pos.arrow;
+            }
+            return `<option value="${key}" ${sel}>${label}</option>`;
         }).join('');
+
         const elementBorderRadius = CONFIG.PANEL_RADIUS;
         const dark = isDarkTheme();
         const selectBg = dark ? '#1f1f1f' : '#fff';
         const selectBorder = dark ? '#cccccc' : '#ccc';
         const selectColor = dark ? '#ffffff' : '#1a1a1a';
+
+        const embedLabelHTML = isPhone ? '' : `
+                <label style="display: flex; justify-content: space-between; align-items: center;">
+                    <span>Встроить</span>
+                    <input type="checkbox" id="kp-embed-mode" ${embedChecked} style="width:18px; height:18px;">
+                </label>
+        `;
+
+        const positionBlockDisplay = (isPhone || !settings.embedMode) ? 'flex' : 'none';
+
         panel.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(0,0,0,0.1); padding-bottom: 4px; margin-bottom: 0;">
-                <span style="font-weight: 600; font-size: 15px;">Настройки</span>
+                <span style="font-weight: 600; font-size: ${isPhone ? '16px' : '15px'};">Настройки</span>
             </div>
             <div style="display: flex; flex-direction: column; gap: ${CONFIG.PANEL_GAP};">
                 <label style="display: flex; justify-content: space-between; align-items: center;">
                     <span>Канал</span>
                     <select id="kp-domain-select" style="
                         background:${selectBg}; border:1px solid ${selectBorder}; border-radius:${elementBorderRadius};
-                        padding:3px 6px; color:${selectColor}; font-size:${CONFIG.PANEL_FONT_SIZE}; width:auto; min-width:fit-content;">
+                        padding:${isPhone ? '6px 8px' : '3px 6px'}; color:${selectColor}; font-size:${getPanelFontSize()}; width:auto; min-width:fit-content;">
                         ${channelOptions}
                     </select>
                 </label>
-                <label style="display: flex; justify-content: space-between; align-items: center;">
-                    <span>Встроить</span>
-                    <input type="checkbox" id="kp-embed-mode" ${embedChecked} style="width:18px; height:18px;">
-                </label>
-                <div id="kp-position-block" style="display: ${settings.embedMode ? 'none' : 'flex'}; flex-direction: column;">
+                ${embedLabelHTML}
+                <div id="kp-position-block" style="display: ${positionBlockDisplay}; flex-direction: column;">
                     <label style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0;">
                         <span>Позиция</span>
                         <select id="kp-position-select" style="
                             background:${selectBg}; border:1px solid ${selectBorder}; border-radius:${elementBorderRadius};
-                            padding:3px 6px; color:${selectColor}; font-size:${CONFIG.PANEL_FONT_SIZE};">
+                            padding:${isPhone ? '6px 8px' : '3px 6px'}; color:${selectColor}; font-size:${getPanelFontSize()};">
                             ${positionOptions}
                         </select>
                     </label>
                 </div>
             </div>
             <button id="kp-save-settings" style="
-                background:#427552; border:none; color:#fff; padding:6px 0;
+                background:#427552; border:none; color:#fff; padding:${isPhone ? '10px 0' : '6px 0'};
                 border-radius:${elementBorderRadius}; font-weight:600; cursor:pointer; transition:0.2s;
-                font-size:${CONFIG.PANEL_FONT_SIZE}; margin-top:2px;">
+                font-size:${getPanelFontSize()}; margin-top:2px;">
                 Сохранить
             </button>
         `;
+
         const embedCheckbox = panel.querySelector('#kp-embed-mode');
         const positionBlock = panel.querySelector('#kp-position-block');
-        embedCheckbox.addEventListener('change', () => { positionBlock.style.display = embedCheckbox.checked ? 'none' : 'flex'; });
+
+        if (embedCheckbox) {
+            embedCheckbox.addEventListener('change', () => {
+                positionBlock.style.display = embedCheckbox.checked ? 'none' : 'flex';
+            });
+        }
+
         panel.querySelector('#kp-save-settings').addEventListener('click', () => {
             settings.targetDomain = panel.querySelector('#kp-domain-select').value;
-            settings.embedMode = embedCheckbox.checked;
+            if (embedCheckbox) {
+                settings.embedMode = embedCheckbox.checked;
+            } else {
+                settings.embedMode = false;
+            }
             if (!settings.embedMode) {
                 const posKey = panel.querySelector('#kp-position-select').value;
                 const pos = CONFIG.POSITIONS[posKey];
@@ -1508,51 +1650,222 @@
             currentUIUrl = null;
             createUI();
         });
+
         document.body.appendChild(panel);
         return panel;
     }
 
-    // ========== ФУНКЦИИ ЗАКЛАДОК ==========
-    function getCurrentMovieData() {
-        const url = window.location.href;
-        const idMatch = url.match(/\/(film|series|tv)\/(\d+)/);
-        const kpId = idMatch ? idMatch[2] : null;
-        if (!kpId) return null;
+    function parseMetaText(text) {
+        const result = { year: '', genres: '' };
+        if (!text) return result;
 
-        let title = document.title.split(' — ')[0] || 'Без названия';
-        const titleEl = document.querySelector('[data-tid="FilmTitle"]') || document.querySelector('h1[itemprop="name"] span');
-        if (titleEl) title = titleEl.textContent.trim();
+        let cleaned = text.trim().replace(/^с\s+/i, '');
+        const parts = cleaned.split(',').map(s => s.trim()).filter(Boolean);
+        if (parts.length === 0) return result;
+
+        const yearMatch = parts[0].match(/\d{4}/);
+        if (yearMatch) result.year = yearMatch[0];
+
+        const genreList = [];
+        for (let i = 1; i < parts.length; i++) {
+            const p = parts[i];
+            if (/^\d+\s*(сезон|серия|серий|сезона|сезонов|мин|мин\.|ч|час|часа|часов)/i.test(p)) continue;
+            genreList.push(p);
+        }
+        result.genres = genreList.join(', ');
+        return result;
+    }
+
+    function extractKpId() {
+        const m = window.location.href.match(/\/(film|series|tv)\/(\d+)/);
+        return m ? m[2] : null;
+    }
+
+    function heuristicFindTitle() {
+        const h1s = document.querySelectorAll('h1');
+        let best = '';
+        for (const h of h1s) {
+            const txt = (h.textContent || '').trim();
+            if (txt.length >= 2 && txt.length <= 150 && txt.length > best.length) {
+                best = txt;
+            }
+        }
+        return best;
+    }
+
+    function heuristicFindMeta() {
+        const result = { year: '', genres: '' };
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+        let count = 0;
+        let node;
+        while ((node = walker.nextNode()) && count < 500) {
+            count++;
+            const text = (node.textContent || '').trim();
+            if (text.length < 8 || text.length > 200) continue;
+            const m = text.match(/^с?\s*(\d{4})\s*,/);
+            if (m) {
+                const parsed = parseMetaText(text);
+                if (parsed.year) return parsed;
+            }
+        }
+        return result;
+    }
+
+    function computeMovieData(kpId) {
+        let title = '';
+
+        const titleTextEl = document.querySelector('[data-tid="ecbdef09"]');
+        if (titleTextEl) {
+            const txt = (titleTextEl.textContent || '').trim();
+            if (txt) title = txt;
+        }
+
+        if (!title) {
+            const titleImg = document.querySelector('h1[class*="style_title__"] img[alt]')
+                          || document.querySelector('h1[class*="styles_movieTitleRoot"] img[alt]');
+            if (titleImg) {
+                const alt = (titleImg.getAttribute('alt') || '').trim();
+                if (alt) title = alt;
+            }
+        }
+
+        if (!title) {
+            const el = document.querySelector('[data-tid="FilmTitle"]')
+                    || document.querySelector('h1[itemprop="name"] span');
+            if (el) {
+                const txt = (el.textContent || '').trim();
+                if (txt) title = txt;
+            }
+        }
+
+        if (!title) {
+            const h = heuristicFindTitle();
+            if (h) title = h;
+        }
+
+        if (!title) {
+            title = document.title.split(' — ')[0] || 'Без названия';
+        }
 
         let year = '';
-        const yearLink = document.querySelector('[data-test-id="year"] a') || document.querySelector('a[href*="/year/"]');
-        if (yearLink) { year = yearLink.textContent.trim(); } else { const m = document.title.match(/\((\d{4})\)/); if (m) year = m[1]; }
+        let genres = '';
+
+        const metaEl = document.querySelector('[data-tid="70553ae9"]');
+        if (metaEl) {
+            const firstDiv = metaEl.querySelector('div');
+            if (firstDiv) {
+                const text = (firstDiv.textContent || '').trim();
+                const parsed = parseMetaText(text);
+                year = parsed.year;
+                genres = parsed.genres;
+            }
+        }
+
+        if (!year) {
+            const yearLink = document.querySelector('[data-test-id="year"] a')
+                           || document.querySelector('a[href*="/year/"]');
+            if (yearLink) {
+                year = (yearLink.textContent || '').trim();
+            } else {
+                const m = document.title.match(/\((\d{4})\)/);
+                if (m) year = m[1];
+            }
+        }
+
+        if (!year) {
+            const h = heuristicFindMeta();
+            if (h.year) {
+                year = h.year;
+                genres = h.genres;
+            }
+        }
+
+        if (!genres) {
+            const genreLinks = document.querySelectorAll('[data-test-id="genres"] a[href*="/lists/movies/genre--"]');
+            genres = Array.from(genreLinks).map(a => a.textContent.trim()).join(', ');
+        }
 
         let posterUrl = '';
-        const posterImg = document.querySelector('img[data-tid="d813cf42"]') || document.querySelector('.film-poster img') || document.querySelector('[data-tid="FilmPoster"] img');
-        if (posterImg?.src) { posterUrl = posterImg.src; } else {
+        const posterImg = document.querySelector('img[data-tid="d813cf42"]')
+            || document.querySelector('.film-poster img')
+            || document.querySelector('[data-tid="FilmPoster"] img');
+        if (posterImg && posterImg.src) {
+            posterUrl = posterImg.src;
+        } else {
             const ogImage = document.querySelector('meta[property="og:image"]');
             if (ogImage) posterUrl = ogImage.getAttribute('content');
         }
-
-        let rating = '';
-        const ratingSelectors = ['.film-rating-value span[data-tid="939058a8"]', '.film-rating-value span', '[data-tid="kp-movie-rating.rating-value"] span', '.styles_rating__value', 'span[itemprop="ratingValue"]', 'meta[itemprop="ratingValue"]'];
-        for (const sel of ratingSelectors) {
-            const el = document.querySelector(sel);
-            if (el) { const text = el.textContent || el.getAttribute('content') || ''; const match = text.match(/([\d.]+)/); if (match) { rating = match[1]; break; } }
+        if (!posterUrl && kpId) {
+            posterUrl = CONFIG.POSTER_TEMPLATE.replace('{id}', kpId);
         }
 
-        let genres = '';
-        const genreLinks = document.querySelectorAll('[data-test-id="genres"] a[href*="/lists/movies/genre--"]');
-        genres = Array.from(genreLinks).map(a => a.textContent.trim()).join(', ');
+        let rating = '';
+        const ratingCandidates = document.querySelectorAll('[data-tid="939058a8"]');
+        for (const el of ratingCandidates) {
+            const text = el.textContent || '';
+            const match = text.match(/([\d.]+)/);
+            if (match) { rating = match[1]; break; }
+        }
+
+        if (!rating) {
+            const ratingSelectors = [
+                '.film-rating-value span',
+                '[data-tid="kp-movie-rating.rating-value"] span',
+                '.styles_rating__value',
+                'span[itemprop="ratingValue"]',
+                'meta[itemprop="ratingValue"]'
+            ];
+            for (const sel of ratingSelectors) {
+                const el = document.querySelector(sel);
+                if (el) {
+                    const text = el.textContent || el.getAttribute('content') || '';
+                    const match = text.match(/([\d.]+)/);
+                    if (match) { rating = match[1]; break; }
+                }
+            }
+        }
 
         return { id: kpId, title, year, posterUrl, rating, genres, addedAt: Date.now() };
     }
 
-    function getSavedMovies() { try { return JSON.parse(localStorage.getItem(CONFIG.SAVED_STORAGE_KEY) || '[]'); } catch(e) { return []; } }
-    function saveMovie(movie) { const movies = getSavedMovies(); if (!movies.some(m => m.id === movie.id)) { movies.push(movie); localStorage.setItem(CONFIG.SAVED_STORAGE_KEY, JSON.stringify(movies)); return true; } return false; }
-    function removeMovie(id) { const movies = getSavedMovies().filter(m => m.id !== id); localStorage.setItem(CONFIG.SAVED_STORAGE_KEY, JSON.stringify(movies)); }
+    function getCurrentMovieData() {
+        const kpId = extractKpId();
+        if (!kpId) return null;
 
-    let realHeaderHeightSaved = 0;
+        const now = Date.now();
+        if (_movieDataCache.id === kpId && _movieDataCache.data && (now - _movieDataCache.ts) < CONFIG.MOVIE_DATA_CACHE_TTL) {
+            return _movieDataCache.data;
+        }
+
+        const data = computeMovieData(kpId);
+
+        if (data && data.title && data.title !== 'Без названия' && data.year) {
+            _movieDataCache = { id: kpId, data, ts: now };
+        }
+
+        return data;
+    }
+
+    function getSavedMovies() {
+        try { return JSON.parse(localStorage.getItem(CONFIG.SAVED_STORAGE_KEY) || '[]'); }
+        catch (e) { return []; }
+    }
+
+    function saveMovie(movie) {
+        const movies = getSavedMovies();
+        if (!movies.some(m => m.id === movie.id)) {
+            movies.push(movie);
+            localStorage.setItem(CONFIG.SAVED_STORAGE_KEY, JSON.stringify(movies));
+            return true;
+        }
+        return false;
+    }
+
+    function removeMovie(id) {
+        const movies = getSavedMovies().filter(m => m.id !== id);
+        localStorage.setItem(CONFIG.SAVED_STORAGE_KEY, JSON.stringify(movies));
+    }
+
     function createSavedPanel() {
         if (document.getElementById('kp-saved-panel')) return document.getElementById('kp-saved-panel');
         const panel = document.createElement('div');
@@ -1565,8 +1878,9 @@
             borderRadius: CONFIG.PANEL_RADIUS,
             color: textColor,
             fontFamily: 'Segoe UI, Arial, sans-serif',
-            fontSize: CONFIG.PANEL_FONT_SIZE,
-            width: '260px',
+            fontSize: getPanelFontSize(),
+            width: CONFIG.SAVED_PANEL_WIDTH,
+            maxWidth: 'calc(100vw - 24px)',
             display: 'none',
             flexDirection: 'column',
             overflow: 'hidden',
@@ -1579,76 +1893,189 @@
         const header = document.createElement('div');
         header.style.cssText = `flex-shrink: 0; background: ${bgColor}; padding: 6px 10px 4px; border-bottom: 1px solid rgba(0,0,0,0.1);`;
         header.innerHTML = `
-            <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
                 <span style="font-weight:600; font-size:13px;">Закладки <span id="kp-saved-count"></span></span>
-                <button id="kp-save-current-btn" style="
-                    background:#427552; border:none; color:#fff; padding:3px 10px;
-                    border-radius:20px; font-size:12px; cursor:pointer; font-weight:600;">
-                    📍Сохранить
-                </button>
+                <div style="display:flex;gap:4px;align-items:center;">
+                    <button id="kp-share-btn" title="Поделиться / Импорт закладок" style="
+                        background:#427552; border:none; color:#fff; padding:${isPhone ? '6px 12px' : '3px 8px'};
+                        border-radius:20px; font-size:${isPhone ? '15px' : '13px'}; cursor:pointer; font-weight:600;
+                        line-height:1.4; touch-action:manipulation; -webkit-tap-highlight-color:transparent;">
+                        🔗
+                    </button>
+                    <button id="kp-save-current-btn" title="Сохранить текущий фильм в закладки" style="
+                        background:#427552; border:none; color:#fff; padding:${isPhone ? '6px 14px' : '3px 10px'};
+                        border-radius:20px; font-size:${isPhone ? '13px' : '12px'}; cursor:pointer; font-weight:600;
+                        touch-action:manipulation; -webkit-tap-highlight-color:transparent;">
+                        📍Сохранить
+                    </button>
+                </div>
             </div>
         `;
         panel.appendChild(header);
 
         const list = document.createElement('div');
         list.id = 'kp-saved-list';
-        list.style.cssText = 'flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding: 4px 4px;';
+        list.style.cssText = 'display: flex; flex-direction: column; gap: 4px; padding: 4px; flex: 1 1 auto; min-height: 0; overflow-y: auto; box-sizing: border-box;';
+        list.style.maxHeight = CONFIG.SAVED_LIST_MAX_HEIGHT;
         list.style.setProperty('scrollbar-width', 'none', 'important');
         list.style.setProperty('-ms-overflow-style', 'none', 'important');
         panel.appendChild(list);
 
-        document.body.appendChild(panel);
+        const shareView = document.createElement('div');
+        shareView.id = 'kp-share-view';
+        shareView.style.cssText = 'display: none; flex-direction: column; gap: 8px; padding: 10px 8px; flex: 0 0 auto; box-sizing: border-box;';
 
-        const prevDisplay = panel.style.display;
-        const prevVisibility = panel.style.visibility;
-        panel.style.display = 'flex';
-        panel.style.visibility = 'hidden';
-        panel.style.height = 'auto';
-        realHeaderHeightSaved = header.getBoundingClientRect().height;
-        panel.style.display = prevDisplay;
-        panel.style.visibility = prevVisibility;
-        panel.style.height = '';
+        const qrContainer = document.createElement('div');
+        qrContainer.id = 'kp-qr-container';
+        qrContainer.style.cssText = 'display: flex; align-items: center; justify-content: center; color: #888; font-size: 12px; min-height: 40px;';
+        shareView.appendChild(qrContainer);
+
+        const linkRow = document.createElement('div');
+        linkRow.style.cssText = 'display: flex; gap: 4px; align-items: stretch;';
+        const linkInput = document.createElement('input');
+        linkInput.id = 'kp-share-link-input';
+        linkInput.type = 'text';
+        linkInput.readOnly = true;
+        linkInput.value = '';
+        Object.assign(linkInput.style, {
+            flex: '1 1 auto', minWidth: '0', padding: '6px 8px',
+            border: '1px solid rgba(0,0,0,0.15)', borderRadius: '8px',
+            fontSize: '11px', background: 'rgba(0,0,0,0.05)',
+            color: textColor, boxSizing: 'border-box', outline: 'none'
+        });
+        linkRow.appendChild(linkInput);
+
+        const copyBtn = document.createElement('button');
+        copyBtn.id = 'kp-share-copy-btn';
+        copyBtn.title = 'Копировать ссылку';
+        copyBtn.textContent = '📋';
+        copyBtn.style.cssText = 'flex: 0 0 auto; width: 38px; padding: 0; border: none; border-radius: 8px; background: #427552; color: #fff; font-weight: 600; cursor: pointer; font-size: 14px; font-family: inherit; transition: opacity 0.2s; touch-action: manipulation; -webkit-tap-highlight-color: transparent;';
+        linkRow.appendChild(copyBtn);
+        shareView.appendChild(linkRow);
+
+        const actionRow = document.createElement('div');
+        actionRow.style.cssText = 'display: flex; gap: 4px;';
+        const exportBtn = document.createElement('button');
+        exportBtn.textContent = '💾 Экспорт';
+        exportBtn.style.cssText = 'flex: 1 1 0; padding: 8px 10px; border: none; border-radius: 8px; background: rgba(99,102,241,0.15); color: ' + textColor + '; font-weight: 600; cursor: pointer; font-size: 12px; font-family: inherit; touch-action: manipulation; -webkit-tap-highlight-color: transparent;';
+        actionRow.appendChild(exportBtn);
+
+        const importBtn = document.createElement('button');
+        importBtn.textContent = '📥 Импорт';
+        importBtn.style.cssText = 'flex: 1 1 0; padding: 8px 10px; border: none; border-radius: 8px; background: rgba(99,102,241,0.15); color: ' + textColor + '; font-weight: 600; cursor: pointer; font-size: 12px; font-family: inherit; touch-action: manipulation; -webkit-tap-highlight-color: transparent;';
+        actionRow.appendChild(importBtn);
+        shareView.appendChild(actionRow);
+
+        const hint = document.createElement('div');
+        hint.id = 'kp-share-hint';
+        hint.style.cssText = 'font-size: 11px; color: #888; line-height: 1.4; text-align: center;';
+        shareView.appendChild(hint);
+
+        panel.appendChild(shareView);
+
+        document.body.appendChild(panel);
 
         panel.querySelector('#kp-save-current-btn').addEventListener('click', (e) => {
             e.stopPropagation();
             const movie = getCurrentMovieData();
             if (movie) {
-                saveMovie(movie);
+                const saved = saveMovie(movie);
                 renderSavedMovies(panel);
+                if (saved) showToast('Добавлено в закладки');
+                else showToast('Уже в закладках');
             }
+        });
+
+        panel.querySelector('#kp-share-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleShareView(panel);
+        });
+
+        copyBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (copyBtn.dataset.disabled === '1') {
+                showToast('Ссылка слишком длинная для копирования');
+                return;
+            }
+            const doCopy = () => showToast('Ссылка скопирована');
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(linkInput.value).then(doCopy).catch(() => {
+                    linkInput.select();
+                    try { document.execCommand('copy'); doCopy(); } catch (err) {}
+                });
+            } else {
+                linkInput.select();
+                try { document.execCommand('copy'); doCopy(); } catch (err) {}
+            }
+        });
+
+        exportBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            exportToFile();
+        });
+
+        importBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            importFromFile().then(() => {
+                updateShareViewContent(panel);
+                renderSavedMovies(panel);
+            });
         });
 
         return panel;
     }
 
-    function measureAndSetHeight(panel, list, count) {
-        if (count === 0) {
-            panel.style.height = realHeaderHeightSaved + 'px';
+    function toggleShareView(panel) {
+        const list = panel.querySelector('#kp-saved-list');
+        const shareView = panel.querySelector('#kp-share-view');
+        const isShareVisible = shareView.style.display !== 'none';
+
+        if (isShareVisible) {
+            shareView.style.display = 'none';
+            list.style.display = 'flex';
+            renderSavedMovies(panel);
+        } else {
+            list.style.display = 'none';
+            shareView.style.display = 'flex';
+            updateShareViewContent(panel);
+        }
+    }
+
+    function updateShareViewContent(panel) {
+        const movies = getSavedMovies();
+        const linkInput = panel.querySelector('#kp-share-link-input');
+        const qrContainer = panel.querySelector('#kp-qr-container');
+        const hint = panel.querySelector('#kp-share-hint');
+        const copyBtn = panel.querySelector('#kp-share-copy-btn');
+
+        if (movies.length === 0) {
+            linkInput.value = '';
+            qrContainer.innerHTML = '<div style="color:#888;font-size:11px;text-align:center;">Нет закладок для экспорта</div>';
+            hint.textContent = 'Добавьте закладки, чтобы делиться ими.';
+            copyBtn.dataset.disabled = '1';
+            copyBtn.style.opacity = '0.45';
+            copyBtn.style.cursor = 'not-allowed';
             return;
         }
-        const prevDisplay = panel.style.display;
-        const prevOpacity = panel.style.opacity;
-        const prevOverflow = panel.style.overflow;
-        const prevListOverflow = list.style.overflowY;
 
-        panel.style.display = 'flex';
-        panel.style.opacity = '0';
-        panel.style.height = 'auto';
-        panel.style.overflow = 'hidden';
-        list.style.overflowY = 'visible';
-        panel.offsetHeight;
+        const link = buildShareLink();
+        linkInput.value = link;
 
-        const listHeight = list.scrollHeight;
-        if (count <= 3) {
-            panel.style.height = realHeaderHeightSaved + listHeight + 'px';
+        const tooLong = link.length > CONFIG.QR_MAX_LENGTH;
+
+        if (tooLong) {
+            hint.innerHTML = '<span style="color:#ff8888;">⚠️ Слишком много закладок.<br>Ссылка не помещается в QR-код.<br>Используйте «Экспорт» в файл.</span>';
+            copyBtn.dataset.disabled = '1';
+            copyBtn.style.opacity = '0.45';
+            copyBtn.style.cursor = 'not-allowed';
+            qrContainer.innerHTML = '<div style="text-align:center;color:#ff8888;font-size:11px;line-height:1.5;padding:4px;">QR-код недоступен</div>';
         } else {
-            panel.style.height = '245px';
+            hint.textContent = `Закладок: ${movies.length} • Размер ссылки: ${link.length} симв.`;
+            copyBtn.dataset.disabled = '0';
+            copyBtn.style.opacity = '1';
+            copyBtn.style.cursor = 'pointer';
+            renderQRButton(qrContainer, link);
         }
-
-        panel.style.display = prevDisplay;
-        panel.style.opacity = prevOpacity || '1';
-        panel.style.overflow = prevOverflow || 'hidden';
-        list.style.overflowY = prevListOverflow || 'auto';
     }
 
     function renderSavedMovies(panel) {
@@ -1662,49 +2089,325 @@
 
         if (movies.length === 0) {
             list.innerHTML = '<div style="color:#888; text-align:center; padding:8px;">Пока ничего не сохранено</div>';
-            panel.style.height = realHeaderHeightSaved + 'px';
             return;
         }
 
+        const cardHeight = 64;
+        const deleteZoneWidth = isPhone ? CONFIG.PHONE_DELETE_ZONE_WIDTH : CONFIG.DESKTOP_DELETE_ZONE_WIDTH;
+
         movies.sort((a, b) => b.addedAt - a.addedAt);
+
+        const fragment = document.createDocumentFragment();
+
         movies.forEach(movie => {
             const card = document.createElement('div');
+            const poster = movie.posterUrl || (movie.id ? CONFIG.POSTER_TEMPLATE.replace('{id}', movie.id) : '');
             card.style.cssText = `
-                position: relative; height: 64px; flex-shrink: 0; border-radius: 20px;
-                background-image: url('${movie.posterUrl || ''}'); background-size: cover; background-position: center;
+                position: relative; height: ${cardHeight}px; flex-shrink: 0; border-radius: 20px;
+                background-image: url('${poster}'); background-size: cover; background-position: center;
+                background-color: #1a1e2e;
                 overflow: hidden; box-shadow: 0 0 0 1px rgba(0,0,0,0.1); cursor: pointer; transition: box-shadow 0.2s;
                 will-change: transform; backface-visibility: hidden;
+                touch-action: manipulation; -webkit-tap-highlight-color: transparent;
             `;
             card.addEventListener('mouseenter', () => card.style.boxShadow = '0 0 0 1px #818cf8');
             card.addEventListener('mouseleave', () => card.style.boxShadow = '0 0 0 1px rgba(0,0,0,0.1)');
             card.addEventListener('click', () => { window.location.href = `https://www.kinopoisk.ru/film/${movie.id}/`; });
 
             const overlay = document.createElement('div');
-            overlay.style.cssText = 'position: absolute; inset: -1px; background: linear-gradient(90deg, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.3) 100%); border-radius: 20px; z-index: 1;';
+            overlay.style.cssText = `position: absolute; inset: -1px; background: linear-gradient(90deg, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.3) 100%); border-radius: 20px; z-index: 1;`;
             card.appendChild(overlay);
 
             const info = document.createElement('div');
-            info.style.cssText = 'position: relative; z-index: 2; display: flex; flex-direction: column; justify-content: center; height: 100%; padding: 6px 10px; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.8); box-sizing: border-box;';
-            const displayGenres = movie.genres ? movie.genres.split(', ').slice(0, 4).join(', ') : '';
+            info.style.cssText = `position: relative; z-index: 2; display: flex; flex-direction: column; justify-content: center; height: 100%; padding: 6px 10px; padding-right: calc(${deleteZoneWidth} + 10px); color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.8); box-sizing: border-box;`;
+
+            const displayTitle = escapeHtml(movie.title || ('ID ' + movie.id));
+            const displayYear = escapeHtml(movie.year || '');
+            const displayRating = escapeHtml(movie.rating || '');
+            const displayGenres = movie.genres
+                ? escapeHtml(movie.genres.split(', ').slice(0, 4).join(', '))
+                : '';
+
             info.innerHTML = `
-                <div style="font-weight:600; font-size:12px; line-height:1.3; word-wrap:break-word; overflow-wrap:break-word;">${movie.title}</div>
-                <div style="font-size:10px; color:#ddd; margin-top:1px;">${movie.year || ''} ${movie.rating ? '• КП ' + movie.rating : ''}</div>
+                <div style="font-weight:600; font-size:12px; line-height:1.3; word-wrap:break-word; overflow-wrap:break-word;">${displayTitle}</div>
+                <div style="font-size:10px; color:#ddd; margin-top:1px;">${displayYear}${displayRating ? ' • КП ' + displayRating : ''}</div>
                 ${displayGenres ? `<div style="font-size:9px; color:#aaa; margin-top:1px; line-height:1.3; word-wrap:break-word; overflow-wrap:break-word;">${displayGenres}</div>` : ''}
             `;
             card.appendChild(info);
 
-            const delBtn = document.createElement('div');
-            delBtn.textContent = '✕';
-            delBtn.style.cssText = 'position: absolute; top: 2px; right: 4px; z-index: 3; cursor: pointer; font-size: 13px; color: #ff4444; opacity: 0.9; text-shadow: 0 1px 3px rgba(0,0,0,0.5); padding: 2px;';
-            delBtn.addEventListener('click', (e) => {
+            const deleteZone = document.createElement('div');
+            deleteZone.setAttribute('title', 'Удалить из закладок');
+            deleteZone.style.cssText = `
+                position: absolute;
+                top: 0; right: 0; bottom: 0;
+                width: ${deleteZoneWidth};
+                background: rgba(220, 38, 38, 0.35);
+                border-radius: 0 20px 20px 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 4;
+                cursor: pointer;
+                font-size: ${isPhone ? '18px' : '13px'};
+                color: #fff;
+                text-shadow: 0 1px 3px rgba(0,0,0,0.7);
+                transition: background 0.15s;
+                touch-action: manipulation;
+                -webkit-tap-highlight-color: transparent;
+                user-select: none;
+            `;
+            deleteZone.textContent = '✕';
+
+            deleteZone.addEventListener('mouseenter', () => {
+                deleteZone.style.background = 'rgba(220, 38, 38, 0.55)';
+            });
+            deleteZone.addEventListener('mouseleave', () => {
+                deleteZone.style.background = 'rgba(220, 38, 38, 0.35)';
+            });
+            deleteZone.addEventListener('click', (e) => {
                 e.stopPropagation();
+                e.preventDefault();
                 removeMovie(movie.id);
                 renderSavedMovies(panel);
             });
-            card.appendChild(delBtn);
-            list.appendChild(card);
+            deleteZone.addEventListener('touchstart', (e) => {
+                e.stopPropagation();
+                deleteZone.style.background = 'rgba(220, 38, 38, 0.7)';
+            }, { passive: true });
+            deleteZone.addEventListener('touchend', (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                removeMovie(movie.id);
+                renderSavedMovies(panel);
+            });
+
+            card.appendChild(deleteZone);
+            fragment.appendChild(card);
         });
-        measureAndSetHeight(panel, list, movies.length);
+
+        list.appendChild(fragment);
+    }
+
+    function encodeToUrl(str) {
+        const utf8 = new TextEncoder().encode(str);
+        let bin = '';
+        utf8.forEach(b => bin += String.fromCharCode(b));
+        return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    }
+
+    function decodeFromUrl(encoded) {
+        const b64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
+        const padded = b64 + '='.repeat((4 - b64.length % 4) % 4);
+        const bin = atob(padded);
+        const bytes = new Uint8Array([...bin].map(c => c.charCodeAt(0)));
+        return new TextDecoder().decode(bytes);
+    }
+
+    function buildShareLink() {
+        const movies = getSavedMovies();
+        const compact = movies.map(m => [String(m.id), m.title || '', m.year || '']);
+        const json = JSON.stringify(compact);
+        const encoded = encodeToUrl(json);
+
+        const baseUrl = location.origin + location.pathname;
+        const sep = location.search ? '&' : '?';
+        return baseUrl + sep + CONFIG.SHARE_QUERY_KEY + '=' + encoded;
+    }
+
+    function importFromUrl() {
+        let encoded = null;
+
+        try {
+            const urlParams = new URLSearchParams(location.search);
+            encoded = urlParams.get(CONFIG.SHARE_QUERY_KEY);
+        } catch (e) {}
+
+        if (!encoded) {
+            const hash = location.hash;
+            const prefix = '#' + CONFIG.SHARE_HASH_PREFIX;
+            if (hash.startsWith(prefix)) {
+                encoded = hash.slice(prefix.length);
+            }
+        }
+
+        if (!encoded) return;
+
+        try {
+            const json = decodeFromUrl(encoded);
+            const compact = JSON.parse(json);
+            if (!Array.isArray(compact)) return;
+
+            const existing = getSavedMovies();
+            const existingIds = new Set(existing.map(m => String(m.id)));
+            let added = 0;
+
+            const baseTime = Date.now();
+
+            compact.forEach((item, idx) => {
+                if (!Array.isArray(item) || item.length < 1) return;
+                const id = String(item[0]);
+                const title = item[1] || '';
+                const year = item[2] || '';
+                if (existingIds.has(id)) return;
+
+                existing.push({
+                    id,
+                    title,
+                    year,
+                    posterUrl: CONFIG.POSTER_TEMPLATE.replace('{id}', id),
+                    rating: '',
+                    genres: '',
+                    addedAt: baseTime + idx
+                });
+                added++;
+            });
+
+            if (added > 0) {
+                localStorage.setItem(CONFIG.SAVED_STORAGE_KEY, JSON.stringify(existing));
+                showToast(`Импортировано закладок: ${added}`);
+                const panel = document.getElementById('kp-saved-panel');
+                if (panel) renderSavedMovies(panel);
+            } else {
+                showToast('Новых закладок не найдено');
+            }
+
+            history.replaceState(null, '', location.pathname);
+        } catch (e) {
+            showToast('Не удалось импортировать закладки');
+        }
+    }
+
+    function enrichBookmarkFromPage() {
+        const isKP = host === 'www.kinopoisk.ru' || host === 'kinopoisk.ru';
+        if (!isKP) return;
+
+        const id = extractKpId();
+        if (!id) return;
+
+        const movies = getSavedMovies();
+        const idx = movies.findIndex(m => String(m.id) === id);
+        if (idx === -1) return;
+
+        let attempts = 0;
+        const maxAttempts = 30;
+
+        const tryEnrich = () => {
+            const fresh = getCurrentMovieData();
+            if (!fresh || !fresh.title || fresh.title === 'Без названия') {
+                if (++attempts < maxAttempts) setTimeout(tryEnrich, 500);
+                return;
+            }
+
+            const existing = movies[idx];
+            const enriched = {
+                ...existing,
+                title: existing.title || fresh.title,
+                year: existing.year || fresh.year,
+                posterUrl: existing.posterUrl || fresh.posterUrl,
+                rating: existing.rating || fresh.rating,
+                genres: existing.genres || fresh.genres
+            };
+
+            if (JSON.stringify(enriched) !== JSON.stringify(existing)) {
+                movies[idx] = enriched;
+                localStorage.setItem(CONFIG.SAVED_STORAGE_KEY, JSON.stringify(movies));
+                const panel = document.getElementById('kp-saved-panel');
+                if (panel && panel.style.display === 'flex') renderSavedMovies(panel);
+            }
+        };
+        setTimeout(tryEnrich, 1500);
+    }
+
+    function exportToFile() {
+        const movies = getSavedMovies();
+        if (movies.length === 0) {
+            showToast('Нет закладок для экспорта');
+            return;
+        }
+        const data = JSON.stringify(movies, null, 2);
+        const blob = new Blob([data], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `kinopoisk-free-backup-${Date.now()}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast('Файл сохранён');
+    }
+
+    function importFromFile() {
+        return new Promise((resolve) => {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json,application/json';
+            input.style.display = 'none';
+            document.body.appendChild(input);
+
+            input.addEventListener('change', () => {
+                const file = input.files && input.files[0];
+                if (!file) { input.remove(); resolve(); return; }
+
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const data = JSON.parse(e.target.result);
+                        if (!Array.isArray(data)) throw new Error('bad format');
+
+                        const existing = getSavedMovies();
+                        const existingIds = new Set(existing.map(m => String(m.id)));
+                        let added = 0;
+                        const baseTime = Date.now();
+
+                        data.forEach((item, idx) => {
+                            const id = String(item.id || '');
+                            if (!id || existingIds.has(id)) return;
+                            existing.push({
+                                id,
+                                title: item.title || '',
+                                year: item.year || '',
+                                posterUrl: item.posterUrl || CONFIG.POSTER_TEMPLATE.replace('{id}', id),
+                                rating: item.rating || '',
+                                genres: item.genres || '',
+                                addedAt: item.addedAt || (baseTime + idx)
+                            });
+                            added++;
+                        });
+
+                        if (added > 0) {
+                            localStorage.setItem(CONFIG.SAVED_STORAGE_KEY, JSON.stringify(existing));
+                            showToast(`Импортировано закладок: ${added}`);
+                            const panel = document.getElementById('kp-saved-panel');
+                            if (panel) renderSavedMovies(panel);
+                        } else {
+                            showToast('Новых закладок не найдено');
+                        }
+                    } catch (err) {
+                        showToast('Не удалось прочитать файл');
+                    }
+                    input.remove();
+                    resolve();
+                };
+                reader.readAsText(file);
+            });
+
+            input.click();
+        });
+    }
+
+    function renderQRButton(container, text) {
+        container.innerHTML = '';
+
+        const btn = document.createElement('button');
+        btn.textContent = '📱 Показать QR-код';
+        btn.style.cssText = 'padding: 8px 16px; border: none; border-radius: 8px; background: #427552; color: #fff; font-weight: 600; cursor: pointer; font-size: 12px; font-family: inherit; transition: opacity 0.2s; touch-action: manipulation; -webkit-tap-highlight-color: transparent;';
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const url = CONFIG.QR_SERVICE_URL + '?size=300x300&margin=10&data=' + encodeURIComponent(text);
+            window.open(url, '_blank', 'noopener');
+        });
+        container.appendChild(btn);
     }
 
     function startKinopoiskUI() {
@@ -1738,18 +2441,28 @@
         if (window.location.href !== lastUrl) {
             lastUrl = window.location.href;
             currentUIUrl = null;
+
+            invalidateThemeCache();
+            _movieDataCache = { id: null, data: null, ts: 0 };
+
             if (isRebuildMirror && !isBlockedPage) {
                 waitForRebuild();
             } else if (isMirrorDomain() && !isBlockedPage) {
                 if (isHabster) {
                     showBody();
                 }
-                // Ничего не делаем для простых зеркал – CSS уже скрыл лишнее
             } else if (!isBlockedPage) {
                 themeWaitActive = false;
                 waitForThemeAndCreateUI();
             }
         }
+    }
+
+    if (!isBlockedPage && !isMirrorDomain()) {
+        whenReady(() => {
+            importFromUrl();
+            enrichBookmarkFromPage();
+        });
     }
 
     const origPushState = history.pushState;
@@ -1769,7 +2482,6 @@
             if (isHabster) {
                 showBody();
             }
-            // Для habster просто показываем, остальное скрыто CSS
         } else {
             startKinopoiskUI();
         }
