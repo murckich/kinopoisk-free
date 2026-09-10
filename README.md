@@ -211,7 +211,7 @@
 
 Этот проект распространяется под лицензией **Apache License 2.0**. Подробнее см. в файле [LICENSE](https://github.com/murckich/kinopoisk-free/blob/main/LICENSE).
 
-Copyright 2026 Nyanta
+Copyright 2026 Murckich
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
