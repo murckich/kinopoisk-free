@@ -1,7 +1,14 @@
 // ==UserScript==
 // @name         kinopoisk-free
 // @namespace    http://tampermonkey.net/
-// @version      7.5.0
+// @version      7.5.1
+// @changelog    [Новое] Добавлена автоматическая проверка обновлений (раз в 6 часов).
+// @changelog    [Новое] Добавлена кнопка обновления ↻ в шапке панели настроек.
+// @changelog    [Новое] Добавлено окно «Обновление» с версией, датой и описанием изменений.
+// @changelog    [Новое] Добавлена кнопка «Обновить сейчас» в окне обновления.
+// @changelog    [Новое] Используется GM_xmlhttpRequest для обхода CSP Кинопоиска.
+// @changelog    [UI] Тонкие стрелки ←→↖↗↙↘ для выбора позиции на смартфонах.
+// @changelog    [UI] Добавлен индикатор обновления — жёлтая точка на ⚙️ и жёлтая иконка ↻.
 // @description  Бесплатный просмотр фильмом и сериалов на сайте kinopoisk.ru
 // @author       Murckich
 // @icon         https://www.kinopoisk.ru/favicon.ico
@@ -28,9 +35,14 @@
 // @match        https://*.sspoisk.ru/*
 // @match        https://gromfaer.top/*
 // @match        https://*.gromfaer.top/*
+// @match        https://nonchik.com/*
+// @match        https://*.nonchik.com/*
+// @match        https://troutcdn.site/*
+// @match        https://*.troutcdn.site/*
 // @downloadURL  https://raw.githubusercontent.com/murckich/kinopoisk-free/main/kinopoisk-free.user.js
 // @updateURL    https://raw.githubusercontent.com/murckich/kinopoisk-free/main/kinopoisk-free.user.js
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @connect      raw.githubusercontent.com
 // @run-at       document-start
 // @license      Apache-2.0
 // ==/UserScript==
@@ -54,6 +66,12 @@
 (function() {
     'use strict';
 
+    const LOCAL_META = {
+        version: '7.5.1',
+        date: '11.09.2026',
+        size: '—'
+    };
+
     const CONFIG = {
         STORAGE_KEY: 'kpRedirectSettings',
         DEFAULT_DOMAIN: 'habster.sbs',
@@ -70,12 +88,12 @@
         PHONE_BTN_SIZE: 48,
         PHONE_SETTINGS_BTN_SIZE: 42,
         POSITIONS: {
-            'left-top':      { left: true,  vertical: 'top',    arrow: '🢄' },
-            'left-middle':   { left: true,  vertical: 'middle', arrow: '🢀' },
-            'left-bottom':   { left: true,  vertical: 'bottom', arrow: '🢇' },
-            'right-top':     { left: false, vertical: 'top',    arrow: '🢅' },
-            'right-middle':  { left: false, vertical: 'middle', arrow: '🢂' },
-            'right-bottom':  { left: false, vertical: 'bottom', arrow: '🢆' }
+            'left-top':      { left: true,  vertical: 'top',    arrow: '🢄', phoneArrow: '↖' },
+            'left-middle':   { left: true,  vertical: 'middle', arrow: '🢀', phoneArrow: '←' },
+            'left-bottom':   { left: true,  vertical: 'bottom', arrow: '🢇', phoneArrow: '↙' },
+            'right-top':     { left: false, vertical: 'top',    arrow: '🢅', phoneArrow: '↗' },
+            'right-middle':  { left: false, vertical: 'middle', arrow: '🢂', phoneArrow: '→' },
+            'right-bottom':  { left: false, vertical: 'bottom', arrow: '🢆', phoneArrow: '↘' }
         },
         PHONE_POSITIONS: ['left-middle', 'left-bottom', 'right-middle', 'right-bottom'],
         EMBED_SELECTOR: '.styles_buttonsContainer__DCKJk',
@@ -131,6 +149,12 @@
         PHONE_PANEL_FONT_SIZE: '14px',
         EMBED_TIMEOUT: 5000,
         KP_HOME_URL: 'https://www.kinopoisk.ru',
+        GITHUB_URL: 'https://github.com/murckich/kinopoisk-free',
+        UPDATE_URL: 'https://raw.githubusercontent.com/murckich/kinopoisk-free/main/kinopoisk-free.user.js',
+        UPDATE_CACHE_KEY: 'kpUpdateCache',
+        AUTO_CHECK_INTERVAL: 6 * 60 * 60 * 1000,
+        AUTO_CHECK_DELAY_MS: 6000,
+        AUTO_CHECK_DELAY_JITTER_MS: 54000,
         BUTTONS_GAP: '6px',
         SAVED_STORAGE_KEY: 'kpSavedMovies',
         SHARE_QUERY_KEY: 'kp-import',
@@ -143,7 +167,12 @@
         PHONE_DELETE_ZONE_WIDTH: '35px',
         DESKTOP_DELETE_ZONE_WIDTH: '22px',
         THEME_CACHE_TTL: 1000,
-        MOVIE_DATA_CACHE_TTL: 30000
+        MOVIE_DATA_CACHE_TTL: 30000,
+        CHANGELOG_MAX: 1000,
+        COMMIT_CARD_HEIGHT_DESKTOP: '120px',
+        COMMIT_CARD_HEIGHT_PHONE: '100px',
+        UPDATE_ICON_SIZE_DESKTOP: '17px',
+        UPDATE_ICON_SIZE_PHONE: '22px'
     };
 
     const isTouchDevice = (() => {
@@ -162,6 +191,8 @@
 
     let _darkThemeCache = { value: null, ts: 0 };
     let _movieDataCache = { id: null, data: null, ts: 0 };
+    let _updateState = 'idle';
+    let _updateResult = null;
 
     function injectStyleWhenHeadReady(id, css) {
         const style = document.createElement('style');
@@ -233,7 +264,7 @@
     const isBlockedPage = /^\/blocked\.html(\/|$)/.test(window.location.pathname);
     const isHabster = host === 'habster.sbs' || host.endsWith('.habster.sbs');
     const isRebuildMirror = (
-        host.match(/(fbfind\.(life|top|online)|villybizy\.online|flcksbr\.top)/) ||
+        host.match(/(fbfind\.(life|top|online)|villybizy\.online|flcksbr\.top|nonchik\.com|troutcdn\.site)/) ||
         (matchChannelDomain(host) && !isHabster)
     );
 
@@ -257,7 +288,7 @@
 
         if (h.match(/(fbfind\.(life|top|online)|villybizy\.online|flcksbr\.top)/)) {
             rules.push('#tgWrapper, .brand, .topAdPad, #TopAdMb, .adDown, #instructionModal, #tgMain, img[src*="tgimg.png"]');
-        } else if (h.match(/kinopoisk\.ws/)) {
+        } else if (h.match(/nonchik\.com|kinopoisk\.ws|troutcdn\.site/)) {
             rules.push('.site-header,.social,.footer,.disclaimer,.spacer-md,#movie_video,#name,.h2');
         } else if (matchChannelDomain(h)) {
             rules.push('.header,.tg-banner,#unreleased-notice,ins,.share-bar,.footer,.info-tabs-bar,#panel-comments,.cw,#rkn-stub,#tgMain,img[src*="tgimg.png"]');
@@ -593,6 +624,184 @@
         #licntBF6C, span[style="display: none;"] { display: none !important; }
     `;
 
+    const SETTINGS_PANEL_STYLES = `
+        .kp-icon-btn {
+            background: none;
+            border: none;
+            color: inherit;
+            font-size: 15px;
+            line-height: 1;
+            padding: 2px 4px;
+            cursor: pointer;
+            opacity: 0.65;
+            font-family: inherit;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: opacity 0.2s ease, transform 0.2s ease, color 0.2s ease;
+            transform: scale(1);
+            transform-origin: center center;
+            will-change: transform;
+            backface-visibility: hidden;
+            -webkit-font-smoothing: antialiased;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .kp-icon-btn:hover {
+            opacity: 1;
+            transform: scale(1.15);
+        }
+        .kp-icon-btn.kp-has-update {
+            color: #fbbf24 !important;
+            opacity: 1 !important;
+        }
+        #kp-settings-btn {
+            position: relative;
+        }
+        #kp-settings-btn.kp-has-update::after {
+            content: '';
+            position: absolute;
+            top: 3px;
+            right: 3px;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #fbbf24;
+            box-shadow: 0 0 5px rgba(251,191,36,0.8);
+            pointer-events: none;
+            z-index: 2;
+            animation: kp-dot-pulse 2.4s ease-in-out infinite;
+        }
+        @keyframes kp-dot-pulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50%      { transform: scale(1.25); opacity: 0.7; }
+        }
+
+        .kp-update-icon {
+            text-align: center;
+            font-size: 26px;
+            line-height: 1;
+            color: #818cf8;
+            margin: 2px 0 0;
+            transition: color 0.3s;
+            display: block;
+        }
+        .kp-update-icon.ok  { color: #6ee7a7; }
+        .kp-update-icon.new { color: #fbbf24; }
+        .kp-update-icon.err { color: #ff8888; }
+        .kp-update-icon.spin {
+            display: inline-block;
+            width: 100%;
+            animation: kp-rotate 1.2s linear infinite;
+        }
+        @keyframes kp-rotate {
+            from { transform: rotate(0deg); }
+            to   { transform: rotate(360deg); }
+        }
+        .kp-update-title {
+            text-align: center;
+            font-size: 14px;
+            font-weight: 600;
+            line-height: 1.3;
+            margin-top: 2px;
+        }
+        .kp-update-title.ok  { color: #6ee7a7; }
+        .kp-update-title.new { color: #fbbf24; }
+        .kp-update-title.err { color: #ff8888; }
+
+        .kp-update-versions {
+            text-align: center;
+            font-size: 12px;
+            line-height: 1.55;
+            color: #94a3b8;
+            font-weight: 500;
+            margin-top: 4px;
+            margin-bottom: 2px;
+        }
+        .kp-update-versions .line {
+            display: block;
+            white-space: nowrap;
+        }
+        .kp-update-versions .old { color: #94a3b8; }
+        .kp-update-versions .new { color: #fbbf24; }
+        .kp-update-versions .arrow {
+            color: #818cf8;
+            margin: 0 5px;
+            font-size: 12px;
+        }
+        .kp-update-versions .val { color: inherit; }
+        .kp-update-versions .val.ok { color: #6ee7a7; }
+
+        .kp-commit-card {
+            display: none;
+            flex-direction: column;
+            background: rgba(127,127,127,0.08);
+            border: 1px solid rgba(127,127,127,0.18);
+            border-radius: 12px;
+            padding: 6px 10px;
+            font-size: 11px;
+            line-height: 1.4;
+            color: inherit;
+            overflow: hidden;
+        }
+        .kp-commit-card.visible { display: flex; }
+        .kp-commit-header {
+            font-size: 12px;
+            font-weight: 600;
+            color: inherit;
+            margin-bottom: 3px;
+            padding-bottom: 3px;
+            border-bottom: 1px solid rgba(127,127,127,0.15);
+            letter-spacing: 0.1px;
+            flex-shrink: 0;
+        }
+        .kp-commit-scroll {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow-y: auto;
+            padding-right: 4px;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(127,127,127,0.3) transparent;
+        }
+        .kp-commit-scroll::-webkit-scrollbar { width: 4px; }
+        .kp-commit-scroll::-webkit-scrollbar-thumb {
+            background: rgba(127,127,127,0.3);
+            border-radius: 2px;
+        }
+        .kp-commit-text {
+            color: #94a3b8;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+        }
+
+        .kp-update-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-top: 4px;
+        }
+        .kp-update-actions .kp-btn-primary {
+            background: #427552;
+            border: none;
+            color: #fff;
+            padding: 8px 0;
+            border-radius: 20px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 13px;
+            font-family: inherit;
+            transition: opacity 0.15s;
+            width: 100%;
+        }
+        .kp-update-actions .kp-btn-primary:hover { opacity: 0.9; }
+        .kp-update-actions .kp-btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .kp-update-actions .kp-btn-primary.warn { background: #c47d2a; }
+    `;
+
     let settings = loadSettings();
     let currentUIUrl = null;
     let embedObserver = null;
@@ -658,6 +867,145 @@
             .replace(/'/g, '&#39;');
     }
 
+    function compareVersions(a, b) {
+        const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);
+        const pb = String(b).split('.').map(n => parseInt(n, 10) || 0);
+        const len = Math.max(pa.length, pb.length);
+        for (let i = 0; i < len; i++) {
+            const va = pa[i] || 0;
+            const vb = pb[i] || 0;
+            if (va < vb) return -1;
+            if (va > vb) return 1;
+        }
+        return 0;
+    }
+
+    function formatDate(iso) {
+        if (!iso) return '—';
+        try {
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return '—';
+            const day = String(d.getDate()).padStart(2, '0');
+            const mon = String(d.getMonth() + 1).padStart(2, '0');
+            return `${day}.${mon}.${d.getFullYear()}`;
+        } catch (e) {
+            return '—';
+        }
+    }
+
+    function saveUpdateCache(result, state) {
+        try {
+            localStorage.setItem(CONFIG.UPDATE_CACHE_KEY, JSON.stringify({
+                ts: Date.now(),
+                state,
+                result,
+                localVersion: LOCAL_META.version
+            }));
+        } catch (e) {}
+    }
+
+    function loadUpdateCache() {
+        try {
+            const raw = localStorage.getItem(CONFIG.UPDATE_CACHE_KEY);
+            if (!raw) return null;
+            const data = JSON.parse(raw);
+            if (!data || data.localVersion !== LOCAL_META.version) return null;
+            if (Date.now() - data.ts > CONFIG.AUTO_CHECK_INTERVAL) return null;
+            return data;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function gmFetch(url, options = {}) {
+        return new Promise((resolve, reject) => {
+            let settled = false;
+            const finish = (fn, arg) => {
+                if (settled) return;
+                settled = true;
+                fn(arg);
+            };
+            const req = {
+                method: options.method || 'GET',
+                url,
+                headers: options.headers || {},
+                responseType: options.responseType || 'text',
+                timeout: options.timeout || 20000,
+                onload: (res) => finish(resolve, {
+                    ok: res.status >= 200 && res.status < 300,
+                    status: res.status,
+                    statusText: res.statusText,
+                    responseText: res.responseText,
+                    response: res.response,
+                    headers: res.responseHeaders || ''
+                }),
+                onerror: () => finish(reject, new Error('Network error')),
+                ontimeout: () => finish(reject, new Error('Timeout'))
+            };
+            GM_xmlhttpRequest(req);
+        });
+    }
+
+    function getHeader(headersString, name) {
+        if (!headersString) return null;
+        const lines = headersString.split(/\r?\n/);
+        const lower = name.toLowerCase();
+        for (const line of lines) {
+            const idx = line.indexOf(':');
+            if (idx === -1) continue;
+            const key = line.slice(0, idx).trim().toLowerCase();
+            if (key === lower) return line.slice(idx + 1).trim();
+        }
+        return null;
+    }
+
+    function parseChangelog(text) {
+        if (!text) return '';
+        const lines = [];
+        const re = /\/\/\s*@changelog\s+(.+)$/gm;
+        let m;
+        while ((m = re.exec(text)) !== null) {
+            const line = m[1].trim();
+            lines.push(line.replace(/\\n/g, '\n'));
+        }
+        return lines.join('\n').slice(0, CONFIG.CHANGELOG_MAX);
+    }
+
+    async function fetchUpdateInfo() {
+        const url = CONFIG.UPDATE_URL + '?t=' + Date.now();
+        const res = await gmFetch(url);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+
+        const text = res.responseText || '';
+        const versionMatch = text.match(/\/\/\s*@version\s+([^\s]+)/);
+        if (!versionMatch) throw new Error('Не удалось найти @version');
+
+        const remoteVersion = versionMatch[1].trim();
+        const lastModified = getHeader(res.headers, 'last-modified');
+
+        const cmp = compareVersions(LOCAL_META.version, remoteVersion);
+
+        let changelog = '';
+        if (cmp < 0) {
+            changelog = parseChangelog(text);
+        }
+
+        const remoteDate = lastModified ? formatDate(lastModified) : '—';
+
+        return {
+            remoteVersion,
+            remoteDate,
+            changelog
+        };
+    }
+
+    function applyUpdateIndicator(hasUpdate) {
+        const settingsBtn = document.getElementById('kp-settings-btn');
+        const updateIcon = document.getElementById('kp-update-open-btn');
+        if (settingsBtn) settingsBtn.classList.toggle('kp-has-update', !!hasUpdate);
+        if (updateIcon) updateIcon.classList.toggle('kp-has-update', !!hasUpdate);
+    }
+
     document.addEventListener('click', function(e) {
         const settingsPanel = document.getElementById('kp-settings-panel');
         const savedPanel = document.getElementById('kp-saved-panel');
@@ -667,6 +1015,7 @@
         if (settingsPanel && settingsPanel.style.display === 'flex') {
             if (!settingsBtn?.contains(e.target) && !settingsPanel.contains(e.target)) {
                 settingsPanel.style.display = 'none';
+                showSettingsView();
             }
         }
         if (savedPanel && savedPanel.style.display === 'flex') {
@@ -786,11 +1135,10 @@
     }
     initBlockedPageObserver();
 
-    // Все зеркала кроме Браво используют одинаковый формат kinobox.
-    // Универсальный поиск: сначала новые классы, потом старые.
     function getMirrorTypeForRebuild() {
         const h = window.location.hostname;
-        if (h.includes('kinopoisk.ws')) return 'bravo';
+        if (h.includes('flcksbr.top')) return 'tango';
+        if (h.includes('nonchik.com') || h.includes('kinopoisk.ws') || h.includes('troutcdn.site')) return 'bravo';
         return 'gamma';
     }
 
@@ -807,17 +1155,23 @@
         }
     }
 
-    // Универсальный поиск элементов kinobox — сначала новые классы, потом старые.
-    // Работает для всех зеркал с kinobox (бывшие gamma и tango).
-    function getKinoboxElements() {
-        let iframeContainer = document.querySelector('.kinobox_iframe_container');
-        let menuItems = [...document.querySelectorAll('.kinobox_menu li')];
-        let activeClass = 'kinobox_menu_active';
+    function getKinoboxElements(type) {
+        const isTango = type === 'tango';
+        let iframeContainer, menuItems, activeClass;
 
-        if (!iframeContainer || menuItems.length === 0) {
+        if (isTango) {
             iframeContainer = document.querySelector('.kinobox__iframeWrapper');
             menuItems = [...document.querySelectorAll('.kinobox__menuItem')];
             activeClass = 'kinobox__menuItem--active';
+        } else {
+            iframeContainer = document.querySelector('.kinobox_iframe_container');
+            menuItems = [...document.querySelectorAll('.kinobox_menu li')];
+            activeClass = 'kinobox_menu_active';
+            if (!iframeContainer || menuItems.length === 0) {
+                iframeContainer = document.querySelector('.kinobox__iframeWrapper');
+                menuItems = [...document.querySelectorAll('.kinobox__menuItem')];
+                activeClass = 'kinobox__menuItem--active';
+            }
         }
 
         return { iframeContainer, menuItems, activeClass };
@@ -924,7 +1278,7 @@
             return;
         }
 
-        const { iframeContainer, menuItems, activeClass } = getKinoboxElements();
+        const { iframeContainer, menuItems, activeClass } = getKinoboxElements(type);
         const kpId = document.querySelector('.kinobox[data-kinopoisk]')?.getAttribute('data-kinopoisk') || '0';
         const movie = getMovieInfo();
         buildKinoboxPage(iframeContainer, menuItems, kpId, movie, activeClass);
@@ -1050,23 +1404,23 @@
         let attempts = 0;
         const maxAttempts = 60;
         const interval = setInterval(() => {
-            const { iframeContainer, menuItems } = getKinoboxElements();
+            const { iframeContainer, menuItems } = getKinoboxElements(type);
             if (iframeContainer && menuItems.length > 0) {
                 clearInterval(interval);
                 rebuildMirror();
             } else if (++attempts >= maxAttempts) {
                 clearInterval(interval);
-                startPersistentObserver();
+                startPersistentObserver(type);
             }
         }, 200);
     }
 
-    function startPersistentObserver() {
+    function startPersistentObserver(type) {
         let observer;
         let fallbackTimer = null;
 
         const check = () => {
-            const { iframeContainer, menuItems } = getKinoboxElements();
+            const { iframeContainer, menuItems } = getKinoboxElements(type);
             if (iframeContainer && menuItems.length > 0) {
                 if (observer) observer.disconnect();
                 if (fallbackTimer) clearTimeout(fallbackTimer);
@@ -1305,6 +1659,7 @@
             } else {
                 if (savedPanel.style.display === 'flex') savedPanel.style.display = 'none';
                 settingsPanel.style.display = 'flex';
+                showSettingsView();
                 positionFn(settingsPanel);
             }
         });
@@ -1386,6 +1741,8 @@
         group.appendChild(settingsWrapper);
         group.appendChild(savedWrapper);
         target.appendChild(group);
+
+        applyUpdateIndicator(_updateState === 'new');
     }
 
     function buildFixedUI() {
@@ -1469,6 +1826,8 @@
         container.appendChild(settingsWrapper);
         container.appendChild(savedWrapper);
         document.body.appendChild(container);
+
+        applyUpdateIndicator(_updateState === 'new');
     }
 
     function applyFixedPosition(container) {
@@ -1523,9 +1882,187 @@
         return btn;
     }
 
+    function setPanelUpdateWidth(panel, wide) {
+        if (!panel) return;
+        panel.style.width = wide ? CONFIG.SAVED_PANEL_WIDTH : 'auto';
+        panel.style.minWidth = wide ? CONFIG.SAVED_PANEL_WIDTH : CONFIG.PANEL_MIN_WIDTH;
+    }
+
+    function showSettingsView() {
+        const panel = document.getElementById('kp-settings-panel');
+        if (!panel) return;
+        const s = panel.querySelector('#kp-settings-view');
+        const u = panel.querySelector('#kp-update-view');
+        if (s) s.style.display = 'flex';
+        if (u) u.style.display = 'none';
+        setPanelUpdateWidth(panel, false);
+    }
+
+    function showUpdateView() {
+        const panel = document.getElementById('kp-settings-panel');
+        if (!panel) return;
+        const s = panel.querySelector('#kp-settings-view');
+        const u = panel.querySelector('#kp-update-view');
+        if (s) s.style.display = 'none';
+        if (u) u.style.display = 'flex';
+        setPanelUpdateWidth(panel, true);
+        renderUpdateView(_updateState);
+    }
+
+    function renderUpdateView(state) {
+        const panel = document.getElementById('kp-settings-panel');
+        if (!panel) return;
+        const icon = panel.querySelector('#kp-update-icon');
+        const title = panel.querySelector('#kp-update-title');
+        const versions = panel.querySelector('#kp-update-versions');
+        const commitCard = panel.querySelector('#kp-update-commit');
+        const commitText = panel.querySelector('#kp-commit-text');
+        const actions = panel.querySelector('#kp-update-actions');
+        if (!icon || !title || !versions || !actions) return;
+
+        icon.className = 'kp-update-icon';
+        icon.textContent = '↻';
+        title.className = 'kp-update-title';
+        if (commitCard) commitCard.classList.remove('visible');
+
+        const localVerLine = `<span class="line"><span class="val ${state === 'ok' ? 'ok' : ''}">${escapeHtml(LOCAL_META.version)}</span></span>`;
+        const localDateLine = `<span class="line"><span class="val">${escapeHtml(LOCAL_META.date)}</span></span>`;
+
+        if (state === 'loading') {
+            void icon.offsetWidth;
+            icon.classList.add('spin');
+            title.textContent = 'Проверяю…';
+            versions.innerHTML = localVerLine + localDateLine;
+            actions.innerHTML = `<button class="kp-btn-primary" disabled>Проверка…</button>`;
+            return;
+        }
+
+        if (state === 'idle') {
+            title.textContent = 'Проверить обновление?';
+            versions.innerHTML = localVerLine + localDateLine;
+            actions.innerHTML = `<button id="kp-update-check-btn" class="kp-btn-primary">Проверить обновление</button>`;
+            return;
+        }
+
+        if (state === 'ok') {
+            icon.classList.add('ok');
+            icon.textContent = '✓';
+            title.classList.add('ok');
+            title.textContent = 'Всё актуально';
+            versions.innerHTML = localVerLine + localDateLine;
+            actions.innerHTML = `<button id="kp-update-check-btn" class="kp-btn-primary">Проверить ещё раз</button>`;
+            return;
+        }
+
+        if (state === 'new') {
+            const r = _updateResult || {};
+            icon.classList.add('new');
+            icon.textContent = '⬆';
+            title.classList.add('new');
+            title.textContent = 'Доступна новая версия';
+
+            versions.innerHTML = `
+                <span class="line"><span class="old">${escapeHtml(LOCAL_META.version)}</span><span class="arrow">→</span><span class="new">${escapeHtml(r.remoteVersion || '?')}</span></span>
+                <span class="line"><span class="old">${escapeHtml(LOCAL_META.date)}</span><span class="arrow">→</span><span class="new">${escapeHtml(r.remoteDate || '—')}</span></span>
+            `;
+
+            if (commitCard && commitText) {
+                if (r.changelog) {
+                    commitText.textContent = r.changelog;
+                } else {
+                    commitText.textContent = 'Описание недоступно';
+                }
+                commitCard.classList.add('visible');
+            }
+
+            actions.innerHTML = `
+                <button id="kp-update-install-btn" class="kp-btn-primary warn">Обновить сейчас</button>
+            `;
+            return;
+        }
+
+        if (state === 'error') {
+            icon.classList.add('err');
+            icon.textContent = '⚠';
+            title.classList.add('err');
+            title.textContent = 'Не удалось проверить';
+            versions.innerHTML = localVerLine + localDateLine;
+            actions.innerHTML = `<button id="kp-update-check-btn" class="kp-btn-primary">Повторить</button>`;
+            return;
+        }
+    }
+
+    async function checkForUpdates() {
+        _updateState = 'loading';
+        renderUpdateView('loading');
+
+        try {
+            const info = await fetchUpdateInfo();
+            _updateResult = info;
+
+            const cmp = compareVersions(LOCAL_META.version, info.remoteVersion);
+            _updateState = cmp < 0 ? 'new' : 'ok';
+
+            renderUpdateView(_updateState);
+            saveUpdateCache(_updateResult, _updateState);
+            applyUpdateIndicator(_updateState === 'new');
+        } catch (err) {
+            console.error('Update check failed:', err);
+            _updateResult = null;
+            _updateState = 'error';
+            renderUpdateView('error');
+        }
+    }
+
+    async function silentCheckForUpdates() {
+        try {
+            const info = await fetchUpdateInfo();
+            _updateResult = info;
+
+            const cmp = compareVersions(LOCAL_META.version, info.remoteVersion);
+            _updateState = cmp < 0 ? 'new' : 'ok';
+
+            saveUpdateCache(_updateResult, _updateState);
+            applyUpdateIndicator(_updateState === 'new');
+
+            const panel = document.getElementById('kp-settings-panel');
+            if (panel && panel.style.display === 'flex') {
+                const updateView = panel.querySelector('#kp-update-view');
+                if (updateView && updateView.style.display !== 'none') {
+                    renderUpdateView(_updateState);
+                }
+            }
+        } catch (err) {
+            console.error('Silent update check failed:', err);
+        }
+    }
+
+    function bootstrapUpdateCheck() {
+        const cached = loadUpdateCache();
+        if (cached) {
+            _updateState = cached.state;
+            _updateResult = cached.result;
+            applyUpdateIndicator(cached.state === 'new');
+            return;
+        }
+
+        const run = () => { silentCheckForUpdates(); };
+        if ('requestIdleCallback' in window) {
+            requestIdleCallback(run, { timeout: CONFIG.AUTO_CHECK_DELAY_MS + CONFIG.AUTO_CHECK_DELAY_JITTER_MS + 4000 });
+        } else {
+            const delay = CONFIG.AUTO_CHECK_DELAY_MS + Math.floor(Math.random() * CONFIG.AUTO_CHECK_DELAY_JITTER_MS);
+            setTimeout(run, delay);
+        }
+    }
+
     function createSettingsPanel() {
         const panel = document.createElement('div');
         panel.id = 'kp-settings-panel';
+
+        if (!document.getElementById('kp-settings-panel-style')) {
+            injectStyleWhenHeadReady('kp-settings-panel-style', SETTINGS_PANEL_STYLES);
+        }
+
         const bgColor = getPanelBackground();
         const textColor = getPanelTextColor();
         Object.assign(panel.style, {
@@ -1541,7 +2078,8 @@
             display: 'none',
             flexDirection: 'column',
             gap: CONFIG.PANEL_GAP,
-            padding: CONFIG.PANEL_PADDING
+            padding: CONFIG.PANEL_PADDING,
+            boxSizing: 'border-box'
         });
 
         const channelOptions = CONFIG.CHANNELS.map(ch =>
@@ -1554,14 +2092,7 @@
         const positionOptions = positionsKeys.map(key => {
             const pos = CONFIG.POSITIONS[key];
             const sel = settings.btnPosition === (pos.left ? 'left' : 'right') && settings.btnVertical === pos.vertical ? 'selected' : '';
-            let label;
-            if (isPhone) {
-                const side = pos.left ? 'Слева' : 'Справа';
-                const vert = pos.vertical === 'middle' ? 'Центр' : 'Низ';
-                label = `${side} · ${vert}`;
-            } else {
-                label = pos.arrow;
-            }
+            const label = isPhone ? pos.phoneArrow : pos.arrow;
             return `<option value="${key}" ${sel}>${label}</option>`;
         }).join('');
 
@@ -1579,38 +2110,71 @@
         `;
 
         const positionBlockDisplay = (isPhone || !settings.embedMode) ? 'flex' : 'none';
+        const commitCardHeight = isPhone ? CONFIG.COMMIT_CARD_HEIGHT_PHONE : CONFIG.COMMIT_CARD_HEIGHT_DESKTOP;
+        const updateIconSize = isPhone ? CONFIG.UPDATE_ICON_SIZE_PHONE : CONFIG.UPDATE_ICON_SIZE_DESKTOP;
 
         panel.innerHTML = `
-            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(0,0,0,0.1); padding-bottom: 4px; margin-bottom: 0;">
-                <span style="font-weight: 600; font-size: ${isPhone ? '16px' : '15px'};">Настройки</span>
-            </div>
-            <div style="display: flex; flex-direction: column; gap: ${CONFIG.PANEL_GAP};">
-                <label style="display: flex; justify-content: space-between; align-items: center;">
-                    <span>Канал</span>
-                    <select id="kp-domain-select" style="
-                        background:${selectBg}; border:1px solid ${selectBorder}; border-radius:${elementBorderRadius};
-                        padding:${isPhone ? '6px 8px' : '3px 6px'}; color:${selectColor}; font-size:${getPanelFontSize()}; width:auto; min-width:fit-content;">
-                        ${channelOptions}
-                    </select>
-                </label>
-                ${embedLabelHTML}
-                <div id="kp-position-block" style="display: ${positionBlockDisplay}; flex-direction: column;">
-                    <label style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0;">
-                        <span>Позиция</span>
-                        <select id="kp-position-select" style="
+            <div id="kp-settings-view" style="display:flex; flex-direction:column; gap:${CONFIG.PANEL_GAP};">
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(127,127,127,0.18); padding-bottom: 4px; gap: 8px;">
+                    <button id="kp-update-open-btn" class="kp-icon-btn" title="Обновление" style="color:${textColor}; font-size:${updateIconSize};">↻</button>
+                    <a id="kp-github-link" href="${CONFIG.GITHUB_URL}" target="_blank" rel="noopener" style="
+                        color: ${textColor}; text-decoration: none;
+                        font-size: ${isPhone ? '13px' : '12px'};
+                        opacity: 0.65; transition: opacity 0.15s;
+                        touch-action: manipulation; -webkit-tap-highlight-color: transparent;">GitHub</a>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: ${CONFIG.PANEL_GAP};">
+                    <label style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>Канал</span>
+                        <select id="kp-domain-select" style="
                             background:${selectBg}; border:1px solid ${selectBorder}; border-radius:${elementBorderRadius};
-                            padding:${isPhone ? '6px 8px' : '3px 6px'}; color:${selectColor}; font-size:${getPanelFontSize()};">
-                            ${positionOptions}
+                            padding:${isPhone ? '6px 8px' : '3px 6px'}; color:${selectColor}; font-size:${getPanelFontSize()}; width:auto; min-width:fit-content;">
+                            ${channelOptions}
                         </select>
                     </label>
+                    ${embedLabelHTML}
+                    <div id="kp-position-block" style="display: ${positionBlockDisplay}; flex-direction: column; gap: ${CONFIG.PANEL_GAP};">
+                        <label style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0;">
+                            <span>Позиция</span>
+                            <select id="kp-position-select" style="
+                                background:${selectBg}; border:1px solid ${selectBorder}; border-radius:${elementBorderRadius};
+                                padding:${isPhone ? '6px 8px' : '3px 6px'}; color:${selectColor}; font-size:${getPanelFontSize()};">
+                                ${positionOptions}
+                            </select>
+                        </label>
+                    </div>
+                </div>
+                <button id="kp-save-settings" style="
+                    background:#427552; border:none; color:#fff; padding:${isPhone ? '10px 0' : '6px 0'};
+                    border-radius:${elementBorderRadius}; font-weight:600; cursor:pointer; transition:0.2s;
+                    font-size:${getPanelFontSize()}; margin-top:2px;">
+                    Сохранить
+                </button>
+            </div>
+
+            <div id="kp-update-view" style="display:none; flex-direction:column; gap:${CONFIG.PANEL_GAP};">
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(127,127,127,0.18); padding-bottom: 4px; gap: 8px;">
+                    <button id="kp-update-back-btn" class="kp-icon-btn" title="Назад" style="color:${textColor};">←</button>
+                    <span style="font-weight: 600; font-size: 13px; opacity: 0.65; text-align:center; flex:1;">Обновление</span>
+                    <a href="${CONFIG.GITHUB_URL}" target="_blank" rel="noopener" style="
+                        color: ${textColor}; text-decoration: none;
+                        font-size: ${isPhone ? '13px' : '12px'};
+                        opacity: 0.65; transition: opacity 0.15s;
+                        touch-action: manipulation; -webkit-tap-highlight-color: transparent;">GitHub</a>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:6px; padding:4px 2px 4px;">
+                    <div class="kp-update-icon" id="kp-update-icon">↻</div>
+                    <div class="kp-update-title" id="kp-update-title">Проверить обновление?</div>
+                    <div class="kp-update-versions" id="kp-update-versions"></div>
+                    <div class="kp-commit-card" id="kp-update-commit" style="height:${commitCardHeight};">
+                        <div class="kp-commit-header">Кинопоиск [Free]</div>
+                        <div class="kp-commit-scroll">
+                            <div class="kp-commit-text" id="kp-commit-text"></div>
+                        </div>
+                    </div>
+                    <div class="kp-update-actions" id="kp-update-actions"></div>
                 </div>
             </div>
-            <button id="kp-save-settings" style="
-                background:#427552; border:none; color:#fff; padding:${isPhone ? '10px 0' : '6px 0'};
-                border-radius:${elementBorderRadius}; font-weight:600; cursor:pointer; transition:0.2s;
-                font-size:${getPanelFontSize()}; margin-top:2px;">
-                Сохранить
-            </button>
         `;
 
         const embedCheckbox = panel.querySelector('#kp-embed-mode');
@@ -1621,6 +2185,32 @@
                 positionBlock.style.display = embedCheckbox.checked ? 'none' : 'flex';
             });
         }
+
+        const githubLink = panel.querySelector('#kp-github-link');
+        if (githubLink) {
+            githubLink.addEventListener('mouseenter', () => githubLink.style.opacity = '1');
+            githubLink.addEventListener('mouseleave', () => githubLink.style.opacity = '0.65');
+        }
+
+        panel.querySelector('#kp-update-open-btn')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            showUpdateView();
+        });
+        panel.querySelector('#kp-update-back-btn')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            showSettingsView();
+        });
+
+        panel.querySelector('#kp-update-actions')?.addEventListener('click', (e) => {
+            const btn = e.target.closest('button');
+            if (!btn) return;
+            e.stopPropagation();
+            if (btn.id === 'kp-update-check-btn') {
+                checkForUpdates();
+            } else if (btn.id === 'kp-update-install-btn') {
+                window.open(CONFIG.UPDATE_URL, '_blank', 'noopener');
+            }
+        });
 
         panel.querySelector('#kp-save-settings').addEventListener('click', () => {
             settings.targetDomain = panel.querySelector('#kp-domain-select').value;
@@ -1643,6 +2233,10 @@
         });
 
         document.body.appendChild(panel);
+
+        renderUpdateView(_updateState);
+        applyUpdateIndicator(_updateState === 'new');
+
         return panel;
     }
 
@@ -1875,29 +2469,49 @@
             display: 'none',
             flexDirection: 'column',
             overflow: 'hidden',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.15)'
+            boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
+            boxSizing: 'border-box'
         });
         const hideScrollStyle = document.createElement('style');
         hideScrollStyle.textContent = '#kp-saved-panel *::-webkit-scrollbar { display: none; }';
         document.head.appendChild(hideScrollStyle);
 
+        const headerBtnHeight = isPhone ? 30 : 22;
+
         const header = document.createElement('div');
-        header.style.cssText = `flex-shrink: 0; background: ${bgColor}; padding: 6px 10px 4px; border-bottom: 1px solid rgba(0,0,0,0.1);`;
+        header.style.cssText = `flex-shrink: 0; background: ${bgColor}; padding: 4px 10px 4px; border-bottom: 1px solid rgba(0,0,0,0.1);`;
         header.innerHTML = `
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
-                <span style="font-weight:600; font-size:13px;">Закладки <span id="kp-saved-count"></span></span>
-                <div style="display:flex;gap:4px;align-items:center;">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; flex-wrap:nowrap;">
+                <span style="
+                    font-weight:600; font-size:13px;
+                    flex:1 1 auto; min-width:0;
+                    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                    <span style="opacity:0.65;">Закладки</span><span id="kp-saved-count" style="color:${textColor};"></span>
+                </span>
+                <div style="display:flex; gap:4px; align-items:center; flex-shrink:0;">
                     <button id="kp-share-btn" title="Поделиться / Импорт закладок" style="
-                        background:#427552; border:none; color:#fff; padding:${isPhone ? '6px 12px' : '3px 8px'};
-                        border-radius:20px; font-size:${isPhone ? '15px' : '13px'}; cursor:pointer; font-weight:600;
-                        line-height:1.4; touch-action:manipulation; -webkit-tap-highlight-color:transparent;">
-                        🔗
+                        background:#427552; border:none; color:#fff;
+                        padding:0 8px;
+                        height:${headerBtnHeight}px;
+                        border-radius:14px;
+                        font-size:${isPhone ? '15px' : '13px'};
+                        cursor:pointer; font-weight:600;
+                        display:inline-flex; align-items:center; justify-content:center;
+                        box-sizing:border-box; line-height:1;
+                        touch-action:manipulation; -webkit-tap-highlight-color:transparent;">
+                        <span style="display:inline-block; transform:translateY(${isPhone ? '0px' : '-1.5px'});">🔗</span>
                     </button>
                     <button id="kp-save-current-btn" title="Сохранить текущий фильм в закладки" style="
-                        background:#427552; border:none; color:#fff; padding:${isPhone ? '6px 14px' : '3px 10px'};
-                        border-radius:20px; font-size:${isPhone ? '13px' : '12px'}; cursor:pointer; font-weight:600;
+                        background:#427552; border:none; color:#fff;
+                        padding:0 ${isPhone ? '10px' : '8px'};
+                        height:${headerBtnHeight}px;
+                        border-radius:14px;
+                        font-size:${isPhone ? '13px' : '12px'};
+                        cursor:pointer; font-weight:600;
+                        display:inline-flex; align-items:center; justify-content:center;
+                        box-sizing:border-box; line-height:1;
                         touch-action:manipulation; -webkit-tap-highlight-color:transparent;">
-                        📍Сохранить
+                        <span style="display:inline-block; transform:translateY(${isPhone ? '0px' : '-1.5px'});">📍Сохранить</span>
                     </button>
                 </div>
             </div>
@@ -2074,7 +2688,7 @@
         const movies = getSavedMovies();
         const countSpan = panel.querySelector('#kp-saved-count');
         if (countSpan) {
-            countSpan.textContent = movies.length > 0 ? `(${movies.length})` : '';
+            countSpan.textContent = movies.length > 0 ? `: ${movies.length}` : '';
         }
         list.innerHTML = '';
 
@@ -2476,5 +3090,18 @@
         } else {
             startKinopoiskUI();
         }
+    }
+
+    if (!isBlockedPage) {
+        (function initUpdateStateFromCache() {
+            const cached = loadUpdateCache();
+            if (cached) {
+                _updateState = cached.state;
+                _updateResult = cached.result;
+            }
+        })();
+
+        const initialDelay = CONFIG.AUTO_CHECK_DELAY_MS + Math.floor(Math.random() * CONFIG.AUTO_CHECK_DELAY_JITTER_MS);
+        setTimeout(bootstrapUpdateCheck, initialDelay);
     }
 })();
