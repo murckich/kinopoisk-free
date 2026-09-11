@@ -1,7 +1,9 @@
 // ==UserScript==
 // @name         kinopoisk-free
 // @namespace    http://tampermonkey.net/
-// @version      7.5.1
+// @version      7.5.2
+// @changelog    [Фикс] Корректное отображение даты релиза в окне обновления.
+// @changelog    [Фикс] Убраны лишние пустые строки в описании изменений.
 // @changelog    [Новое] Добавлена автоматическая проверка обновлений (раз в 6 часов).
 // @changelog    [Новое] Добавлена кнопка обновления ↻ в шапке панели настроек.
 // @changelog    [Новое] Добавлено окно «Обновление» с версией, датой и описанием изменений.
@@ -67,7 +69,7 @@
     'use strict';
 
     const LOCAL_META = {
-        version: '7.5.1',
+        version: '7.5.2',
         date: '11.09.2026',
         size: '—'
     };
@@ -959,6 +961,13 @@
         return null;
     }
 
+    // === Парсим дату релиза из LOCAL_META удалённого файла ===
+    function parseRemoteDateFromMeta(text) {
+        if (!text) return '';
+        const m = text.match(/LOCAL_META\s*=\s*\{[\s\S]*?date:\s*['"]([^'"]+)['"]/);
+        return m ? m[1].trim() : '';
+    }
+
     function parseChangelog(text) {
         if (!text) return '';
         const lines = [];
@@ -968,7 +977,9 @@
             const line = m[1].trim();
             lines.push(line.replace(/\\n/g, '\n'));
         }
-        return lines.join('\n').slice(0, CONFIG.CHANGELOG_MAX);
+        // Склеиваем через \n, но защищаемся от возможных двойных переносов
+        // (актуально при обновлении со старых версий скрипта)
+        return lines.join('\n').replace(/\n{3,}/g, '\n\n').slice(0, CONFIG.CHANGELOG_MAX);
     }
 
     async function fetchUpdateInfo() {
@@ -982,6 +993,7 @@
 
         const remoteVersion = versionMatch[1].trim();
         const lastModified = getHeader(res.headers, 'last-modified');
+        const dateFromMeta = parseRemoteDateFromMeta(text);
 
         const cmp = compareVersions(LOCAL_META.version, remoteVersion);
 
@@ -990,7 +1002,8 @@
             changelog = parseChangelog(text);
         }
 
-        const remoteDate = lastModified ? formatDate(lastModified) : '—';
+        // Приоритет: дата из LOCAL_META удалённого файла → Last-Modified → '—'
+        const remoteDate = dateFromMeta || (lastModified ? formatDate(lastModified) : '—');
 
         return {
             remoteVersion,
