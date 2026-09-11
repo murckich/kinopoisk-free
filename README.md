@@ -179,6 +179,10 @@
 
 [![Установить](https://img.shields.io/badge/Установить-Кинопоиск_[Free]-4CAF50?style=for-the-badge&logo=github)](https://raw.githubusercontent.com/murckich/kinopoisk-free/main/kinopoisk-free.user.js)
 
+Либо отсканируйте QR код на вашем устройстве.
+
+<img width="400" height="400" alt="image" src="https://github.com/user-attachments/assets/7b73773b-4754-44bc-bc6d-e1b10489ada4" />
+
 > **Альтернативный способ:** Вы также можете скачать файл `kinopoisk-free.user.js` из этого репозитория и установить его вручную через панель Tampermonkey.
 
 ---
