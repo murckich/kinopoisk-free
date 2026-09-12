@@ -1,16 +1,7 @@
 // ==UserScript==
 // @name         kinopoisk-free
 // @namespace    http://tampermonkey.net/
-// @version      7.5.2
-// @changelog    [Фикс] Корректное отображение даты релиза в окне обновления.
-// @changelog    [Фикс] Убраны лишние пустые строки в описании изменений.
-// @changelog    [Новое] Добавлена автоматическая проверка обновлений (раз в 6 часов).
-// @changelog    [Новое] Добавлена кнопка обновления ↻ в шапке панели настроек.
-// @changelog    [Новое] Добавлено окно «Обновление» с версией, датой и описанием изменений.
-// @changelog    [Новое] Добавлена кнопка «Обновить сейчас» в окне обновления.
-// @changelog    [Новое] Используется GM_xmlhttpRequest для обхода CSP Кинопоиска.
-// @changelog    [UI] Тонкие стрелки ←→↖↗↙↘ для выбора позиции на смартфонах.
-// @changelog    [UI] Добавлен индикатор обновления — жёлтая точка на ⚙️ и жёлтая иконка ↻.
+// @version      7.5.3
 // @description  Бесплатный просмотр фильмом и сериалов на сайте kinopoisk.ru
 // @author       Murckich
 // @icon         https://www.kinopoisk.ru/favicon.ico
@@ -69,9 +60,8 @@
     'use strict';
 
     const LOCAL_META = {
-        version: '7.5.2',
-        date: '11.09.2026',
-        size: '—'
+        version: '7.5.3',
+        date: '12.09.2026'
     };
 
     const CONFIG = {
@@ -153,10 +143,16 @@
         KP_HOME_URL: 'https://www.kinopoisk.ru',
         GITHUB_URL: 'https://github.com/murckich/kinopoisk-free',
         UPDATE_URL: 'https://raw.githubusercontent.com/murckich/kinopoisk-free/main/kinopoisk-free.user.js',
+        VERSION_JSON_URL: 'https://raw.githubusercontent.com/murckich/kinopoisk-free/main/version.json',
         UPDATE_CACHE_KEY: 'kpUpdateCache',
-        AUTO_CHECK_INTERVAL: 6 * 60 * 60 * 1000,
-        AUTO_CHECK_DELAY_MS: 6000,
-        AUTO_CHECK_DELAY_JITTER_MS: 54000,
+        OK_CACHE_TTL: 6 * 60 * 60 * 1000,
+        NEW_CACHE_TTL: 20 * 60 * 1000,
+        STALE_UI_THRESHOLD: 5 * 60 * 1000,
+        AUTO_CHECK_BASE_INTERVAL: 15 * 60 * 1000,
+        AUTO_CHECK_JITTER: 5 * 60 * 1000,
+        AUTO_CHECK_INITIAL_DELAY_MS: 6000,
+        AUTO_CHECK_INITIAL_JITTER_MS: 54000,
+        ERROR_BACKOFF_MS: [5 * 60 * 1000, 15 * 60 * 1000, 60 * 60 * 1000],
         BUTTONS_GAP: '6px',
         SAVED_STORAGE_KEY: 'kpSavedMovies',
         SHARE_QUERY_KEY: 'kp-import',
@@ -195,6 +191,12 @@
     let _movieDataCache = { id: null, data: null, ts: 0 };
     let _updateState = 'idle';
     let _updateResult = null;
+    let _lastCheckTs = 0;
+    let _checkInFlight = false;
+    let _checkTimer = null;
+    let _consecutiveErrors = 0;
+    let _visibilityListenerAttached = false;
+    let _onlineListenerAttached = false;
 
     function injectStyleWhenHeadReady(id, css) {
         const style = document.createElement('style');
@@ -882,19 +884,6 @@
         return 0;
     }
 
-    function formatDate(iso) {
-        if (!iso) return '—';
-        try {
-            const d = new Date(iso);
-            if (isNaN(d.getTime())) return '—';
-            const day = String(d.getDate()).padStart(2, '0');
-            const mon = String(d.getMonth() + 1).padStart(2, '0');
-            return `${day}.${mon}.${d.getFullYear()}`;
-        } catch (e) {
-            return '—';
-        }
-    }
-
     function saveUpdateCache(result, state) {
         try {
             localStorage.setItem(CONFIG.UPDATE_CACHE_KEY, JSON.stringify({
@@ -912,7 +901,8 @@
             if (!raw) return null;
             const data = JSON.parse(raw);
             if (!data || data.localVersion !== LOCAL_META.version) return null;
-            if (Date.now() - data.ts > CONFIG.AUTO_CHECK_INTERVAL) return null;
+            const ttl = data.state === 'new' ? CONFIG.NEW_CACHE_TTL : CONFIG.OK_CACHE_TTL;
+            if (Date.now() - data.ts > ttl) return null;
             return data;
         } catch (e) {
             return null;
@@ -948,67 +938,25 @@
         });
     }
 
-    function getHeader(headersString, name) {
-        if (!headersString) return null;
-        const lines = headersString.split(/\r?\n/);
-        const lower = name.toLowerCase();
-        for (const line of lines) {
-            const idx = line.indexOf(':');
-            if (idx === -1) continue;
-            const key = line.slice(0, idx).trim().toLowerCase();
-            if (key === lower) return line.slice(idx + 1).trim();
-        }
-        return null;
-    }
-
-    // === Парсим дату релиза из LOCAL_META удалённого файла ===
-    function parseRemoteDateFromMeta(text) {
-        if (!text) return '';
-        const m = text.match(/LOCAL_META\s*=\s*\{[\s\S]*?date:\s*['"]([^'"]+)['"]/);
-        return m ? m[1].trim() : '';
-    }
-
-    function parseChangelog(text) {
-        if (!text) return '';
-        const lines = [];
-        const re = /\/\/\s*@changelog\s+(.+)$/gm;
-        let m;
-        while ((m = re.exec(text)) !== null) {
-            const line = m[1].trim();
-            lines.push(line.replace(/\\n/g, '\n'));
-        }
-        // Склеиваем через \n, но защищаемся от возможных двойных переносов
-        // (актуально при обновлении со старых версий скрипта)
-        return lines.join('\n').replace(/\n{3,}/g, '\n\n').slice(0, CONFIG.CHANGELOG_MAX);
-    }
-
     async function fetchUpdateInfo() {
-        const url = CONFIG.UPDATE_URL + '?t=' + Date.now();
+        const url = CONFIG.VERSION_JSON_URL + '?t=' + Date.now();
         const res = await gmFetch(url);
         if (!res.ok) throw new Error('HTTP ' + res.status);
 
-        const text = res.responseText || '';
-        const versionMatch = text.match(/\/\/\s*@version\s+([^\s]+)/);
-        if (!versionMatch) throw new Error('Не удалось найти @version');
-
-        const remoteVersion = versionMatch[1].trim();
-        const lastModified = getHeader(res.headers, 'last-modified');
-        const dateFromMeta = parseRemoteDateFromMeta(text);
-
-        const cmp = compareVersions(LOCAL_META.version, remoteVersion);
-
-        let changelog = '';
-        if (cmp < 0) {
-            changelog = parseChangelog(text);
+        let data;
+        try {
+            data = JSON.parse(res.responseText || '');
+        } catch (e) {
+            throw new Error('Некорректный version.json');
         }
 
-        // Приоритет: дата из LOCAL_META удалённого файла → Last-Modified → '—'
-        const remoteDate = dateFromMeta || (lastModified ? formatDate(lastModified) : '—');
+        if (!data || !data.version) throw new Error('В version.json нет поля version');
 
         return {
-            remoteVersion,
-            remoteDate,
-            changelog
+            remoteVersion: String(data.version).trim(),
+            remoteDate: String(data.date || '').trim() || '—',
+            changelog: String(data.changelog || '').trim().slice(0, CONFIG.CHANGELOG_MAX),
+            url: String(data.url || CONFIG.UPDATE_URL).trim()
         };
     }
 
@@ -1914,6 +1862,14 @@
     function showUpdateView() {
         const panel = document.getElementById('kp-settings-panel');
         if (!panel) return;
+
+        // Сброс «Все актуально» / «Ошибка» в «Ожидание», если данные устарели.
+        if ((_updateState === 'ok' || _updateState === 'error') &&
+            _lastCheckTs && (Date.now() - _lastCheckTs) > CONFIG.STALE_UI_THRESHOLD) {
+            _updateState = 'idle';
+            _updateResult = null;
+        }
+
         const s = panel.querySelector('#kp-settings-view');
         const u = panel.querySelector('#kp-update-view');
         if (s) s.style.display = 'none';
@@ -1938,21 +1894,21 @@
         title.className = 'kp-update-title';
         if (commitCard) commitCard.classList.remove('visible');
 
-        const localVerLine = `<span class="line"><span class="val ${state === 'ok' ? 'ok' : ''}">${escapeHtml(LOCAL_META.version)}</span></span>`;
-        const localDateLine = `<span class="line"><span class="val">${escapeHtml(LOCAL_META.date)}</span></span>`;
+        const currentVerLine = `<span class="line"><span class="val ${state === 'ok' ? 'ok' : ''}">${escapeHtml(LOCAL_META.version)}</span></span>`;
+        const currentDateLine = `<span class="line"><span class="val">${escapeHtml(LOCAL_META.date)}</span></span>`;
 
         if (state === 'loading') {
             void icon.offsetWidth;
             icon.classList.add('spin');
             title.textContent = 'Проверяю…';
-            versions.innerHTML = localVerLine + localDateLine;
+            versions.innerHTML = currentVerLine + currentDateLine;
             actions.innerHTML = `<button class="kp-btn-primary" disabled>Проверка…</button>`;
             return;
         }
 
         if (state === 'idle') {
             title.textContent = 'Проверить обновление?';
-            versions.innerHTML = localVerLine + localDateLine;
+            versions.innerHTML = currentVerLine + currentDateLine;
             actions.innerHTML = `<button id="kp-update-check-btn" class="kp-btn-primary">Проверить обновление</button>`;
             return;
         }
@@ -1962,7 +1918,7 @@
             icon.textContent = '✓';
             title.classList.add('ok');
             title.textContent = 'Всё актуально';
-            versions.innerHTML = localVerLine + localDateLine;
+            versions.innerHTML = currentVerLine + currentDateLine;
             actions.innerHTML = `<button id="kp-update-check-btn" class="kp-btn-primary">Проверить ещё раз</button>`;
             return;
         }
@@ -1999,38 +1955,26 @@
             icon.textContent = '⚠';
             title.classList.add('err');
             title.textContent = 'Не удалось проверить';
-            versions.innerHTML = localVerLine + localDateLine;
+            versions.innerHTML = currentVerLine + currentDateLine;
             actions.innerHTML = `<button id="kp-update-check-btn" class="kp-btn-primary">Повторить</button>`;
             return;
         }
     }
 
-    async function checkForUpdates() {
-        _updateState = 'loading';
-        renderUpdateView('loading');
+    async function performCheck({ silent }) {
+        if (_checkInFlight) return;
+        _checkInFlight = true;
 
-        try {
-            const info = await fetchUpdateInfo();
-            _updateResult = info;
-
-            const cmp = compareVersions(LOCAL_META.version, info.remoteVersion);
-            _updateState = cmp < 0 ? 'new' : 'ok';
-
-            renderUpdateView(_updateState);
-            saveUpdateCache(_updateResult, _updateState);
-            applyUpdateIndicator(_updateState === 'new');
-        } catch (err) {
-            console.error('Update check failed:', err);
-            _updateResult = null;
-            _updateState = 'error';
-            renderUpdateView('error');
+        if (!silent) {
+            _updateState = 'loading';
+            renderUpdateView('loading');
         }
-    }
 
-    async function silentCheckForUpdates() {
         try {
             const info = await fetchUpdateInfo();
             _updateResult = info;
+            _lastCheckTs = Date.now();
+            _consecutiveErrors = 0;
 
             const cmp = compareVersions(LOCAL_META.version, info.remoteVersion);
             _updateState = cmp < 0 ? 'new' : 'ok';
@@ -2038,33 +1982,100 @@
             saveUpdateCache(_updateResult, _updateState);
             applyUpdateIndicator(_updateState === 'new');
 
-            const panel = document.getElementById('kp-settings-panel');
-            if (panel && panel.style.display === 'flex') {
-                const updateView = panel.querySelector('#kp-update-view');
-                if (updateView && updateView.style.display !== 'none') {
-                    renderUpdateView(_updateState);
+            if (!silent) {
+                renderUpdateView(_updateState);
+            } else {
+                const panel = document.getElementById('kp-settings-panel');
+                if (panel && panel.style.display === 'flex') {
+                    const updateView = panel.querySelector('#kp-update-view');
+                    if (updateView && updateView.style.display !== 'none') {
+                        renderUpdateView(_updateState);
+                    }
                 }
             }
         } catch (err) {
-            console.error('Silent update check failed:', err);
+            console.error('Update check failed:', err);
+            _consecutiveErrors++;
+            if (!silent) {
+                _updateResult = null;
+                _lastCheckTs = Date.now();
+                _updateState = 'error';
+                renderUpdateView('error');
+                saveUpdateCache(null, 'error');
+            }
+        } finally {
+            _checkInFlight = false;
+        }
+    }
+
+    function checkForUpdates() { return performCheck({ silent: false }); }
+    function silentCheckForUpdates() { return performCheck({ silent: true }); }
+
+    function getNextCheckDelay() {
+        if (_consecutiveErrors > 0) {
+            const idx = Math.min(_consecutiveErrors - 1, CONFIG.ERROR_BACKOFF_MS.length - 1);
+            return CONFIG.ERROR_BACKOFF_MS[idx];
+        }
+        return CONFIG.AUTO_CHECK_BASE_INTERVAL + Math.floor(Math.random() * CONFIG.AUTO_CHECK_JITTER);
+    }
+
+    function scheduleNextCheck() {
+        if (_checkTimer) clearTimeout(_checkTimer);
+        const delay = getNextCheckDelay();
+        _checkTimer = setTimeout(() => {
+            _checkTimer = null;
+            runScheduledCheck();
+        }, delay);
+    }
+
+    function runScheduledCheck() {
+        if (document.visibilityState === 'hidden') {
+            // Не проверяем в фоне — перепланируем при возврате к вкладке.
+            return;
+        }
+        if (typeof navigator.onLine === 'boolean' && !navigator.onLine) {
+            // Нет сети — попробуем позже.
+            scheduleNextCheck();
+            return;
+        }
+        silentCheckForUpdates().finally(() => scheduleNextCheck());
+    }
+
+    function setupUpdateListeners() {
+        if (!_visibilityListenerAttached) {
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible' && !_checkTimer && !_checkInFlight) {
+                    scheduleNextCheck();
+                }
+            });
+            _visibilityListenerAttached = true;
+        }
+        if (!_onlineListenerAttached) {
+            window.addEventListener('online', () => {
+                if (!_checkTimer && !_checkInFlight && _consecutiveErrors > 0) {
+                    scheduleNextCheck();
+                }
+            });
+            _onlineListenerAttached = true;
         }
     }
 
     function bootstrapUpdateCheck() {
+        setupUpdateListeners();
+
         const cached = loadUpdateCache();
         if (cached) {
             _updateState = cached.state;
             _updateResult = cached.result;
+            _lastCheckTs = cached.ts;
             applyUpdateIndicator(cached.state === 'new');
-            return;
-        }
-
-        const run = () => { silentCheckForUpdates(); };
-        if ('requestIdleCallback' in window) {
-            requestIdleCallback(run, { timeout: CONFIG.AUTO_CHECK_DELAY_MS + CONFIG.AUTO_CHECK_DELAY_JITTER_MS + 4000 });
+            scheduleNextCheck();
         } else {
-            const delay = CONFIG.AUTO_CHECK_DELAY_MS + Math.floor(Math.random() * CONFIG.AUTO_CHECK_DELAY_JITTER_MS);
-            setTimeout(run, delay);
+            const delay = CONFIG.AUTO_CHECK_INITIAL_DELAY_MS + Math.floor(Math.random() * CONFIG.AUTO_CHECK_INITIAL_JITTER_MS);
+            _checkTimer = setTimeout(() => {
+                _checkTimer = null;
+                runScheduledCheck();
+            }, delay);
         }
     }
 
@@ -2221,7 +2232,8 @@
             if (btn.id === 'kp-update-check-btn') {
                 checkForUpdates();
             } else if (btn.id === 'kp-update-install-btn') {
-                window.open(CONFIG.UPDATE_URL, '_blank', 'noopener');
+                const url = (_updateResult && _updateResult.url) || CONFIG.UPDATE_URL;
+                window.open(url, '_blank', 'noopener');
             }
         });
 
@@ -3106,15 +3118,6 @@
     }
 
     if (!isBlockedPage) {
-        (function initUpdateStateFromCache() {
-            const cached = loadUpdateCache();
-            if (cached) {
-                _updateState = cached.state;
-                _updateResult = cached.result;
-            }
-        })();
-
-        const initialDelay = CONFIG.AUTO_CHECK_DELAY_MS + Math.floor(Math.random() * CONFIG.AUTO_CHECK_DELAY_JITTER_MS);
-        setTimeout(bootstrapUpdateCheck, initialDelay);
+        bootstrapUpdateCheck();
     }
 })();
