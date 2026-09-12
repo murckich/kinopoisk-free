@@ -117,18 +117,15 @@
 
 **Мобильные:**
 
-| Платформа | Браузер | Статус |
-|---|---|---|
-| Android | ⭐ Firefox | ✅ Рекомендуется |
-| Android | Edge | ✅ |
-| Android | Lemur Browser | ✅ |
-| Android | Quetta Browser | ✅ |
-| Android | Kiwi Browser | ⚠️ Устарел |
-| iOS / iPadOS | Safari + Userscripts | ✅ |
-| iOS / iPadOS | Teak Browser | ✅ |
-| iOS / iPadOS | Gear Browser | ✅ |
-
-> **Android:** Firefox и Edge — единственные браузеры, где Tampermonkey ставится напрямую из Play Store без режима разработчика.
+| Платформа | Браузер | Статус | Установка |
+|---|---|---|---|
+| Android | ⭐ Firefox | ✅ Рекомендуется | [![Google Play](https://img.shields.io/badge/Google_Play-01875F?logo=googleplay&logoColor=white)](https://play.google.com/store/apps/details?id=org.mozilla.firefox) |
+| Android | ⭐ Edge | ✅ Рекомендуется | [![Google Play](https://img.shields.io/badge/Google_Play-01875F?logo=googleplay&logoColor=white)](https://play.google.com/store/apps/details?id=com.microsoft.emmx) |
+| Android | Lemur Browser | ✅ | [![Google Play](https://img.shields.io/badge/Google_Play-01875F?logo=googleplay&logoColor=white)](https://play.google.com/store/apps/details?id=com.lemurbrowser.exts) |
+| Android | Quetta Browser | ✅ | [![Google Play](https://img.shields.io/badge/Google_Play-01875F?logo=googleplay&logoColor=white)](https://play.google.com/store/apps/details?id=net.quetta.browser) |
+| iOS / iPadOS | Safari + Userscripts | ✅ | [![App Store](https://img.shields.io/badge/App_Store-0D96F6?logo=appstore&logoColor=white)](https://apps.apple.com/app/userscripts/id1463298887) |
+| iOS / iPadOS | Teak Browser | ✅ | [![App Store](https://img.shields.io/badge/App_Store-0D96F6?logo=appstore&logoColor=white)](https://apps.apple.com/us/app/teak-browser-extensions/id6443938027) |
+| iOS / iPadOS | Gear Browser | ✅ | [![App Store](https://img.shields.io/badge/App_Store-0D96F6?logo=appstore&logoColor=white)](https://apps.apple.com/app/id1458962238) |
 
 > **iOS:** установите бесплатное приложение **Userscripts** и включите его как расширение в Safari.
 
