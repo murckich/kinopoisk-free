@@ -127,7 +127,7 @@
 | iOS / iPadOS | Teak Browser | ✅ | [![App Store](https://img.shields.io/badge/App_Store-0D96F6?logo=appstore&logoColor=white)](https://apps.apple.com/us/app/teak-browser-extensions/id6443938027) |
 | iOS / iPadOS | Gear Browser | ✅ | [![App Store](https://img.shields.io/badge/App_Store-0D96F6?logo=appstore&logoColor=white)](https://apps.apple.com/app/id1458962238) |
 
-> **iOS:** установите бесплатное приложение **Userscripts** и включите его как расширение в Safari.
+> **iOS:** установите бесплатное приложение **Userscripts** и включите его как расширение в настройках телефона -> Safari.
 
 ---
 
