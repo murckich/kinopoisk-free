@@ -129,6 +129,7 @@
 | iOS / iPadOS | Gear Browser | ✅ |
 
 > **Android:** Firefox и Edge — единственные браузеры, где Tampermonkey ставится напрямую из Play Store без режима разработчика.
+
 > **iOS:** установите бесплатное приложение **Userscripts** и включите его как расширение в Safari.
 
 ---
