@@ -330,6 +330,29 @@
         if (savedPanel) {
             savedPanel.style.background = bgColor;
             savedPanel.style.color = textColor;
+
+            // Header панели закладок (первый child)
+            const savedHeader = savedPanel.firstElementChild;
+            if (savedHeader) {
+                savedHeader.style.background = bgColor;
+            }
+
+            // Счётчик закладок
+            const savedCount = savedPanel.querySelector('#kp-saved-count');
+            if (savedCount) savedCount.style.color = textColor;
+
+            // Поле ссылки share
+            const shareLink = savedPanel.querySelector('#kp-share-link-input');
+            if (shareLink) shareLink.style.color = textColor;
+
+            // Кнопки Экспорт / Импорт (у Copy фиксированный белый — не трогаем)
+            const shareView = savedPanel.querySelector('#kp-share-view');
+            if (shareView) {
+                shareView.querySelectorAll('button').forEach(btn => {
+                    if (btn.id === 'kp-share-copy-btn') return;
+                    btn.style.color = textColor;
+                });
+            }
         }
     }
 
