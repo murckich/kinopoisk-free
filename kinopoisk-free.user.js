@@ -256,9 +256,6 @@
         return isPhone ? CONFIG.PHONE_PANEL_FONT_SIZE : CONFIG.PANEL_FONT_SIZE;
     }
 
-    // ============================================================
-    // Применение темы "на месте"
-    // ============================================================
     function applyThemeInPlace() {
         const colors = getThemeColors();
         const bgColor = getPanelBackground();
@@ -949,7 +946,6 @@
         return 16;
     }
 
-    // ============ Вкладки ============
     function loadTabs() {
         try {
             const raw = localStorage.getItem(CONFIG.TABS_STORAGE_KEY);
@@ -1077,8 +1073,6 @@
         if (savedPanel && savedPanel.style.display === 'flex') {
             if (!saveBtn?.contains(e.target) && !savedPanel.contains(e.target)) {
                 savedPanel.style.display = 'none';
-                // Сброс share-view, чтобы при следующем открытии закладок
-                // показывался обычный список, а не окно «Поделиться».
                 if (savedPanel._resetShareView) savedPanel._resetShareView();
             }
         }
@@ -1588,7 +1582,6 @@
             e.stopPropagation();
             if (savedPanel.style.display === 'flex') {
                 savedPanel.style.display = 'none';
-                // Сброс share-view при закрытии панели по кнопке
                 if (savedPanel._resetShareView) savedPanel._resetShareView();
             } else {
                 if (settingsPanel.style.display === 'flex') settingsPanel.style.display = 'none';
@@ -1909,10 +1902,6 @@
         silentCheckForUpdates().finally(() => scheduleNextCheck());
     }
 
-    // ============================================================
-    // Слушатели обновлений. Определение темы — как в 7.5.4:
-    // через DOM-кнопки Kinopoisk, без слушателя кликов.
-    // ============================================================
     function setupUpdateListeners() {
         if (!_visibilityListenerAttached) {
             document.addEventListener('visibilitychange', () => {
@@ -2324,11 +2313,6 @@
         setSavedMovies(movies);
     }
 
-    // ============================================================
-    // Универсальная функция импорта — используется и share-ссылкой,
-    // и импортом файла. Объединение по имени вкладки, создание
-    // отсутствующих вкладок, дедупликация по id.
-    // ============================================================
     function applyImportedTabs(incomingTabs) {
         let totalAdded = 0;
         let tabsCreated = 0;
@@ -2600,7 +2584,6 @@
 
         addInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') createTab(); });
 
-        // === Share view ===
         const shareBtn = panel.querySelector('#kp-share-btn-el');
         const shareToggle = panel.querySelector('#kp-share-toggle');
         const shareQrBtn = panel.querySelector('#kp-share-qr-btn');
@@ -2610,10 +2593,6 @@
 
         let shareMode = 'current';
 
-        // Сброс share-view в исходное состояние.
-        // Вызывается при закрытии панели закладок (клик вне или повторное нажатие
-        // на иконку закладок), чтобы при следующем открытии показывался
-        // список закладок, а не окно «Поделиться».
         function resetShareView() {
             shareView.classList.remove('open');
             savedList.style.display = 'flex';
@@ -2754,7 +2733,6 @@
             });
         });
 
-        // === Сохранить ===
         panel.querySelector('#kp-save-current-btn').addEventListener('click', (e) => {
             e.stopPropagation();
             const movie = getCurrentMovieData();
@@ -3006,9 +2984,6 @@
         setTimeout(tryEnrich, 1500);
     }
 
-    // ============================================================
-    // Экспорт в файл — {version, tabs:[{name, movies:[...]}]}
-    // ============================================================
     function exportToFile() {
         const movies = getSavedMovies();
         if (movies.length === 0) {
