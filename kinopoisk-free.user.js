@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kinopoisk-free
 // @namespace    http://tampermonkey.net/
-// @version      7.5.4
+// @version      7.5.5
 // @description  Бесплатный просмотр фильмом и сериалов на сайте kinopoisk.ru
 // @author       Murckich
 // @icon         https://www.kinopoisk.ru/favicon.ico
@@ -60,13 +60,18 @@
     'use strict';
 
     const LOCAL_META = {
-        version: '7.5.4',
+        version: '7.5.5',
         date: '13.09.2026'
     };
 
     const CONFIG = {
         STORAGE_KEY: 'kpRedirectSettings',
+        TABS_STORAGE_KEY: 'kpTabs',
+        ACTIVE_TAB_KEY: 'kpActiveTab',
         DEFAULT_DOMAIN: 'habster.sbs',
+        DEFAULT_TAB_ID: 'default',
+        DEFAULT_TAB_NAME: 'Все',
+        TAB_NAME_MAX: 13,
         CHANNELS: [
             { domain: 'habster.sbs',    name: 'Альфа', domains: ['habster.sbs'] },
             { domain: 'www.kinopoisk.ws',   name: 'Браво', domains: ['www.kinopoisk.ws'] },
@@ -169,11 +174,8 @@
     };
 
     const isTouchDevice = (() => {
-        try {
-            return window.matchMedia('(hover: none) and (pointer: coarse)').matches;
-        } catch (e) {
-            return 'ontouchstart' in window && window.innerWidth <= 1024;
-        }
+        try { return window.matchMedia('(hover: none) and (pointer: coarse)').matches; }
+        catch (e) { return 'ontouchstart' in window && window.innerWidth <= 1024; }
     })();
     const screenMin = Math.min(
         (window.screen && window.screen.width) || 0,
@@ -255,16 +257,13 @@
     }
 
     // ============================================================
-    // Применение темы "на месте" без пересборки UI.
-    // Используется при переключении темы на телефоне,
-    // чтобы не закрывать панель настроек.
+    // Применение темы "на месте"
     // ============================================================
     function applyThemeInPlace() {
         const colors = getThemeColors();
         const bgColor = getPanelBackground();
         const textColor = getPanelTextColor();
 
-        // Главная кнопка ▶
         const mainBtn = document.getElementById('kp-redirect-btn');
         if (mainBtn) {
             const isTop = settings.btnVertical === 'top';
@@ -288,7 +287,6 @@
             mainBtn.style.color = mainColor;
         }
 
-        // Кнопки ⚙️ и 📑
         const settingsBtn = document.getElementById('kp-settings-btn');
         const saveBtn = document.getElementById('kp-save-btn');
         [settingsBtn, saveBtn].forEach(btn => {
@@ -301,58 +299,23 @@
             btn.style.color = colors.EMBED_SETTINGS_COLOR;
         });
 
-        // Панель настроек
         const panel = document.getElementById('kp-settings-panel');
         if (panel) {
             panel.style.background = bgColor;
             panel.style.color = textColor;
-
-            panel.querySelectorAll('.kp-icon-btn').forEach(btn => {
-                btn.style.color = textColor;
-            });
-            panel.querySelectorAll('a[href="' + CONFIG.GITHUB_URL + '"]').forEach(a => {
-                a.style.color = textColor;
-            });
-
+            panel.querySelectorAll('.kp-icon-btn').forEach(btn => btn.style.color = textColor);
+            panel.querySelectorAll('a[href="' + CONFIG.GITHUB_URL + '"]').forEach(a => a.style.color = textColor);
             const channelMenu = panel.querySelector('#kp-channel-dd-menu');
             if (channelMenu) channelMenu.style.background = bgColor;
             const posMenu = panel.querySelector('#kp-pos-dd-menu');
             if (posMenu) posMenu.style.background = bgColor;
-
             const updateView = panel.querySelector('#kp-update-view');
-            if (updateView && updateView.style.display !== 'none') {
-                renderUpdateView(_updateState);
-            }
+            if (updateView && updateView.style.display !== 'none') renderUpdateView(_updateState);
         }
 
-        // Панель закладок
         const savedPanel = document.getElementById('kp-saved-panel');
         if (savedPanel) {
-            savedPanel.style.background = bgColor;
-            savedPanel.style.color = textColor;
-
-            // Header панели закладок (первый child)
-            const savedHeader = savedPanel.firstElementChild;
-            if (savedHeader) {
-                savedHeader.style.background = bgColor;
-            }
-
-            // Счётчик закладок
-            const savedCount = savedPanel.querySelector('#kp-saved-count');
-            if (savedCount) savedCount.style.color = textColor;
-
-            // Поле ссылки share
-            const shareLink = savedPanel.querySelector('#kp-share-link-input');
-            if (shareLink) shareLink.style.color = textColor;
-
-            // Кнопки Экспорт / Импорт (у Copy фиксированный белый — не трогаем)
-            const shareView = savedPanel.querySelector('#kp-share-view');
-            if (shareView) {
-                shareView.querySelectorAll('button').forEach(btn => {
-                    if (btn.id === 'kp-share-copy-btn') return;
-                    btn.style.color = textColor;
-                });
-            }
+            savedPanel.dataset.theme = isDarkTheme() ? 'dark' : 'light';
         }
     }
 
@@ -373,11 +336,9 @@
         document.documentElement.style.visibility = 'hidden';
         document.documentElement.style.background = '#0b0d14';
     }
-
     if (isRebuildMirror) {
         injectStyleWhenHeadReady('kp-base-bg-mirror', 'html, body { background: #0b0d14 !important; }');
     }
-
     if (isBlockedPage) {
         injectStyleWhenHeadReady('kp-base-bg', 'html, body { background: #0b0d14 !important; }');
     }
@@ -385,7 +346,6 @@
     function getEarlyCleanCSS() {
         const h = window.location.hostname;
         const rules = [];
-
         if (h.match(/(fbfind\.(life|top|online)|villybizy\.online|flcksbr\.top)/)) {
             rules.push('#tgWrapper, .brand, .topAdPad, #TopAdMb, .adDown, #instructionModal, #tgMain, img[src*="tgimg.png"]');
         } else if (h.match(/nonchik\.com|kinopoisk\.ws|troutcdn\.site/)) {
@@ -396,16 +356,12 @@
                 rules.push('.support-fab, #new-release-notice, #trending-block, .info-section');
             }
         }
-
         return rules.map(selector => selector + '{display:none!important}').join(' ');
     }
 
     function injectEarlyCleanCSS() {
         const css = getEarlyCleanCSS();
-        if (css) {
-            injectStyleWhenHeadReady('kp-early-clean', css);
-        }
-
+        if (css) injectStyleWhenHeadReady('kp-early-clean', css);
         if (isRebuildMirror) {
             const hideTgMain = () => {
                 const el = document.getElementById('tgMain');
@@ -426,153 +382,52 @@
             }).observe(document.documentElement, { childList: true, subtree: true });
         }
     }
-
     injectEarlyCleanCSS();
 
     function showBody() {
         document.documentElement.style.visibility = '';
-        const ids = ['kp-hide-body-early', 'kp-base-bg-mirror', 'kp-base-bg', 'kp-hide-body'];
-        ids.forEach(id => document.getElementById(id)?.remove());
+        ['kp-hide-body-early', 'kp-base-bg-mirror', 'kp-base-bg', 'kp-hide-body'].forEach(id => document.getElementById(id)?.remove());
     }
 
     function releaseBodyForSimpleMirrors() {
         if (isBlockedPage) return;
-        if (isHabster) {
-            showBody();
-        } else if (!isRebuildMirror && matchChannelDomain(host)) {
-            showBody();
-        }
+        if (isHabster) showBody();
+        else if (!isRebuildMirror && matchChannelDomain(host)) showBody();
     }
     releaseBodyForSimpleMirrors();
 
     const ALFA_STYLES_GAMMA_TANGO = `
         :root {
-            --bg: #0b0d14;
-            --bg-card: #131620;
-            --bg-elev: #1a1e2e;
-            --accent: #818cf8;
-            --accent-g: rgba(99,102,241,0.18);
-            --text: #e2e8f0;
-            --muted: #94a3b8;
-            --dim: #64748b;
-            --border: #1e2235;
-            --radius: 14px;
-            --gold: #fbbf24;
+            --bg: #0b0d14; --bg-card: #131620; --bg-elev: #1a1e2e;
+            --accent: #818cf8; --accent-g: rgba(99,102,241,0.18);
+            --text: #e2e8f0; --muted: #94a3b8; --dim: #64748b;
+            --border: #1e2235; --radius: 14px; --gold: #fbbf24;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        html, body {
-            background: var(--bg) !important;
-            color: var(--text);
-            font-family: system-ui, sans-serif;
-            overflow-y: auto;
-            margin: 0;
-        }
-        body::before {
-            content: '';
-            position: fixed; inset: 0;
-            background-image: radial-gradient(circle at 1px 1px, rgba(99,102,241,0.05) 1px, transparent 0);
-            background-size: 30px 30px;
-            pointer-events: none; z-index: 0;
-        }
-        #kp-alfa-page {
-            position: relative; z-index: 1;
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 1.25rem;
-        }
-        .player-section {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 18px;
-            margin-bottom: 1.25rem;
-        }
-        .player-top-bar {
-            display: flex; align-items: center;
-            padding: 0.75rem 0.85rem 0;
-            position: relative; z-index: 10;
-            gap: 1rem;
-        }
+        html, body { background: var(--bg) !important; color: var(--text); font-family: system-ui, sans-serif; overflow-y: auto; margin: 0; }
+        body::before { content: ''; position: fixed; inset: 0; background-image: radial-gradient(circle at 1px 1px, rgba(99,102,241,0.05) 1px, transparent 0); background-size: 30px 30px; pointer-events: none; z-index: 0; }
+        #kp-alfa-page { position: relative; z-index: 1; max-width: 1200px; margin: 0 auto; padding: 1.25rem; }
+        .player-section { background: var(--bg-card); border: 1px solid var(--border); border-radius: 18px; margin-bottom: 1.25rem; }
+        .player-top-bar { display: flex; align-items: center; padding: 0.75rem 0.85rem 0; position: relative; z-index: 10; gap: 1rem; }
         .kp-select { position: relative; }
-        .kp-select-trigger {
-            display: flex; align-items: center; gap: 0.5rem;
-            padding: 0.42rem 0.75rem;
-            background: var(--bg-elev);
-            border: 1px solid var(--border);
-            border-radius: 9px;
-            cursor: pointer; font-size: 0.84rem; font-weight: 500;
-            color: var(--text); user-select: none;
-            transition: border-color 0.15s;
-        }
+        .kp-select-trigger { display: flex; align-items: center; gap: 0.5rem; padding: 0.42rem 0.75rem; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 9px; cursor: pointer; font-size: 0.84rem; font-weight: 500; color: var(--text); user-select: none; transition: border-color 0.15s; }
         .kp-select-trigger:hover { border-color: rgba(99,102,241,0.5); }
-        .kp-select.open .kp-select-trigger {
-            border-color: var(--accent);
-            background: rgba(99,102,241,0.07);
-        }
-        .kp-select-dot {
-            width: 7px; height: 7px; border-radius: 50%;
-            background: var(--accent); box-shadow: 0 0 6px var(--accent);
-        }
-        .kp-select-chevron {
-            color: var(--dim); transition: transform 0.2s;
-        }
+        .kp-select.open .kp-select-trigger { border-color: var(--accent); background: rgba(99,102,241,0.07); }
+        .kp-select-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+        .kp-select-chevron { color: var(--dim); transition: transform 0.2s; }
         .kp-select.open .kp-select-chevron { transform: rotate(180deg); }
-        .kp-select-menu {
-            position: absolute; top: calc(100% + 6px); left: 0;
-            min-width: 190px;
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 11px; padding: 0.3rem;
-            z-index: 100; display: none;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-        }
+        .kp-select-menu { position: absolute; top: calc(100% + 6px); left: 0; min-width: 190px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 11px; padding: 0.3rem; z-index: 100; display: none; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
         .kp-select.open .kp-select-menu { display: block; }
-        .kp-select-item {
-            display: flex; align-items: center; gap: 0.55rem;
-            padding: 0.5rem 0.65rem;
-            border-radius: 7px; cursor: pointer;
-            font-size: 0.84rem; color: var(--muted);
-            transition: background 0.12s, color 0.12s;
-        }
+        .kp-select-item { display: flex; align-items: center; gap: 0.55rem; padding: 0.5rem 0.65rem; border-radius: 7px; cursor: pointer; font-size: 0.84rem; color: var(--muted); transition: background 0.12s, color 0.12s; }
         .kp-select-item:hover { background: var(--bg-elev); color: var(--text); }
         .kp-select-item.active { color: var(--accent); background: rgba(99,102,241,0.1); }
-        .kp-select-num {
-            width: 1.55rem; height: 1.55rem; border-radius: 6px;
-            background: rgba(99,102,241,0.15); color: var(--accent);
-            display: flex; align-items: center; justify-content: center;
-            font-size: 0.73rem; font-weight: 700;
-        }
+        .kp-select-num { width: 1.55rem; height: 1.55rem; border-radius: 6px; background: rgba(99,102,241,0.15); color: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 0.73rem; font-weight: 700; }
         .kp-select-item.active .kp-select-num { background: rgba(99,102,241,0.3); }
-
-        .vpn-warning {
-            font-size: 0.75rem; color: var(--dim);
-            display: flex; align-items: center; gap: 0.3rem;
-            padding: 0.45rem 0.75rem 0.6rem;
-        }
-        .player-wrap {
-            position: relative;
-            margin: 0.75rem;
-            border-radius: 0 0 14px 14px;
-            overflow: hidden;
-            z-index: 1;
-        }
-        .kinobox_iframe_container, .kinobox__iframeWrapper {
-            position: relative;
-            padding-top: 56.25% !important;
-        }
-        .kinobox_iframe, .kinobox__iframe {
-            position: absolute; inset: 0;
-            width: 100%; height: 100%;
-            border: none; border-radius: 12px;
-            background: #000;
-        }
-
-        .movie-info {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 18px;
-            padding: 1.5rem;
-            margin-bottom: 1rem;
-        }
+        .vpn-warning { font-size: 0.75rem; color: var(--dim); display: flex; align-items: center; gap: 0.3rem; padding: 0.45rem 0.75rem 0.6rem; }
+        .player-wrap { position: relative; margin: 0.75rem; border-radius: 0 0 14px 14px; overflow: hidden; z-index: 1; }
+        .kinobox_iframe_container, .kinobox__iframeWrapper { position: relative; padding-top: 56.25% !important; }
+        .kinobox_iframe, .kinobox__iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: none; border-radius: 12px; background: #000; }
+        .movie-info { background: var(--bg-card); border: 1px solid var(--border); border-radius: 18px; padding: 1.5rem; margin-bottom: 1rem; }
         .movie-info-inner { display: flex; gap: 1.5rem; }
         @media (max-width: 600px) { .movie-info-inner { flex-direction: column; } }
         .movie-poster-wrap { flex-shrink: 0; width: 130px; }
@@ -581,578 +436,394 @@
         .movie-title { font-size: 1.5rem; font-weight: 700; margin-bottom: 0.2rem; line-height: 1.25; }
         .movie-orig { font-size: 0.9rem; color: var(--muted); margin-bottom: 0.9rem; }
         .movie-meta { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
-        .meta-tag {
-            font-size: 0.78rem; padding: 0.22rem 0.65rem;
-            background: var(--bg-elev); border: 1px solid var(--border);
-            border-radius: 20px; color: var(--muted);
-        }
+        .meta-tag { font-size: 0.78rem; padding: 0.22rem 0.65rem; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 20px; color: var(--muted); }
         .meta-tag.gold { color: var(--gold); border-color: rgba(251,191,36,0.3); background: rgba(251,191,36,0.08); }
-        .meta-tag.kp   { color: var(--accent); border-color: rgba(99,102,241,0.3); background: var(--accent-g); }
+        .meta-tag.kp { color: var(--accent); border-color: rgba(99,102,241,0.3); background: var(--accent-g); }
         .movie-rows { display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: 1rem; }
-        .movie-row  { font-size: 0.85rem; }
+        .movie-row { font-size: 0.85rem; }
         .movie-row-label { color: var(--dim); }
-        .movie-row-val   { color: var(--text); }
-        .movie-desc {
-            font-size: 0.88rem; color: var(--muted);
-            line-height: 1.65; border-top: 1px solid var(--border);
-            padding-top: 0.9rem; margin-top: 0.5rem;
-        }
-        .kinobox_loader, .kinobox_menu_button, .kbt_select, .kbt_button,
-        .kinobox__loaderWrapper, .kinobox__loader { display: none !important; }
-
-        .kp-torrent-btn {
-            display: inline-flex; align-items: center;
-            padding: 0.42rem 0.85rem;
-            background: var(--bg-elev);
-            border: 1px solid var(--border);
-            border-radius: 9px;
-            color: var(--accent);
-            font-size: 0.84rem;
-            text-decoration: none;
-            transition: background 0.15s, border-color 0.15s;
-            white-space: nowrap;
-        }
-        .kp-torrent-btn:hover {
-            background: rgba(99,102,241,0.1);
-            border-color: rgba(99,102,241,0.3);
-            color: var(--text);
-        }
+        .movie-row-val { color: var(--text); }
+        .movie-desc { font-size: 0.88rem; color: var(--muted); line-height: 1.65; border-top: 1px solid var(--border); padding-top: 0.9rem; margin-top: 0.5rem; }
+        .kinobox_loader, .kinobox_menu_button, .kbt_select, .kbt_button, .kinobox__loaderWrapper, .kinobox__loader { display: none !important; }
+        .kp-torrent-btn { display: inline-flex; align-items: center; padding: 0.42rem 0.85rem; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 9px; color: var(--accent); font-size: 0.84rem; text-decoration: none; transition: background 0.15s, border-color 0.15s; white-space: nowrap; }
+        .kp-torrent-btn:hover { background: rgba(99,102,241,0.1); border-color: rgba(99,102,241,0.3); color: var(--text); }
     `;
 
     const BLOCKED_PAGE_STYLES = `
-        :root {
-            --bg: #0b0d14;
-            --panel: #131620;
-            --panel-soft: #1a1e2e;
-            --border: #1e2235;
-            --text: #e2e8f0;
-            --muted: #94a3b8;
-            --link: #818cf8;
-            --radius: 18px;
-        }
-        body {
-            background: var(--bg) !important;
-            color: var(--text) !important;
-            font-family: system-ui, sans-serif !important;
-            overflow-y: auto !important;
-            margin: 0 !important;
-            visibility: visible !important;
-        }
-        body::before {
-            content: '';
-            position: fixed; inset: 0;
-            background-image: radial-gradient(circle at 1px 1px, rgba(99,102,241,0.05) 1px, transparent 0);
-            background-size: 30px 30px;
-            pointer-events: none; z-index: 0;
-        }
-        .page {
-            position: relative; z-index: 1;
-            height: auto !important;
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 1.25rem !important;
-            background: transparent !important;
-        }
-        .shell {
-            max-width: 600px !important;
-            width: 100% !important;
-            background: var(--panel) !important;
-            border-radius: var(--radius) !important;
-            border: none !important;
-            box-shadow: none !important;
-            overflow: hidden !important;
-        }
-        .topbar {
-            background: var(--panel-soft) !important;
-            border-bottom: 1px solid var(--border) !important;
-            padding: 0.75rem 1.5rem !important;
-            font-weight: 600 !important;
-            font-size: 1.1rem !important;
-            color: #818cf8 !important;
-        }
-        .content {
-            padding: 1.5rem !important;
-            gap: 1rem !important;
-        }
-        h1 {
-            font-size: 1.5rem !important;
-            font-weight: 700 !important;
-            margin: 0 0 0.5rem 0 !important;
-            color: var(--text) !important;
-        }
-        .text {
-            background: rgba(99,102,241,0.05) !important;
-            border: 1px solid rgba(99,102,241,0.15) !important;
-            border-radius: 12px !important;
-            padding: 1.25rem !important;
-            font-size: 0.9rem !important;
-            line-height: 1.6 !important;
-            color: var(--muted) !important;
-        }
-        .text b {
-            color: var(--text) !important;
-            font-weight: 600 !important;
-        }
-        footer {
-            background: var(--panel-soft) !important;
-            border-top: 1px solid var(--border) !important;
-            padding: 0.75rem 1.5rem !important;
-            display: flex !important;
-            justify-content: center !important;
-        }
-        .footer-links {
-            display: flex !important;
-            align-items: center !important;
-            gap: 1rem !important;
-            font-size: 0.85rem !important;
-        }
-        .kp-home-btn {
-            color: var(--link) !important;
-            text-decoration: none !important;
-            font-weight: 600 !important;
-            background: none !important;
-            border: none !important;
-            padding: 0 !important;
-            font: inherit !important;
-            cursor: pointer !important;
-        }
-        .kp-home-btn:hover {
-            text-decoration: underline !important;
-        }
+        :root { --bg: #0b0d14; --panel: #131620; --panel-soft: #1a1e2e; --border: #1e2235; --text: #e2e8f0; --muted: #94a3b8; --link: #818cf8; --radius: 18px; }
+        body { background: var(--bg) !important; color: var(--text) !important; font-family: system-ui, sans-serif !important; overflow-y: auto !important; margin: 0 !important; visibility: visible !important; }
+        body::before { content: ''; position: fixed; inset: 0; background-image: radial-gradient(circle at 1px 1px, rgba(99,102,241,0.05) 1px, transparent 0); background-size: 30px 30px; pointer-events: none; z-index: 0; }
+        .page { position: relative; z-index: 1; height: auto !important; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 1.25rem !important; background: transparent !important; }
+        .shell { max-width: 600px !important; width: 100% !important; background: var(--panel) !important; border-radius: var(--radius) !important; border: none !important; box-shadow: none !important; overflow: hidden !important; }
+        .topbar { background: var(--panel-soft) !important; border-bottom: 1px solid var(--border) !important; padding: 0.75rem 1.5rem !important; font-weight: 600 !important; font-size: 1.1rem !important; color: #818cf8 !important; }
+        .content { padding: 1.5rem !important; gap: 1rem !important; }
+        h1 { font-size: 1.5rem !important; font-weight: 700 !important; margin: 0 0 0.5rem 0 !important; color: var(--text) !important; }
+        .text { background: rgba(99,102,241,0.05) !important; border: 1px solid rgba(99,102,241,0.15) !important; border-radius: 12px !important; padding: 1.25rem !important; font-size: 0.9rem !important; line-height: 1.6 !important; color: var(--muted) !important; }
+        .text b { color: var(--text) !important; font-weight: 600 !important; }
+        footer { background: var(--panel-soft) !important; border-top: 1px solid var(--border) !important; padding: 0.75rem 1.5rem !important; display: flex !important; justify-content: center !important; }
+        .footer-links { display: flex !important; align-items: center !important; gap: 1rem !important; font-size: 0.85rem !important; }
+        .kp-home-btn { color: var(--link) !important; text-decoration: none !important; font-weight: 600 !important; background: none !important; border: none !important; padding: 0 !important; font: inherit !important; cursor: pointer !important; }
+        .kp-home-btn:hover { text-decoration: underline !important; }
         #licntBF6C, span[style="display: none;"] { display: none !important; }
     `;
 
     const SETTINGS_PANEL_STYLES = `
-        .kp-icon-btn {
-            background: none;
-            border: none;
-            color: inherit;
-            line-height: 1;
-            padding: 2px 4px;
-            cursor: pointer;
-            opacity: 0.65;
-            font-family: inherit;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            transition: opacity 0.2s ease, transform 0.2s ease, color 0.2s ease;
-            transform: scale(1);
-            transform-origin: center center;
-            will-change: transform;
-            backface-visibility: hidden;
-            -webkit-font-smoothing: antialiased;
-            touch-action: manipulation;
-            -webkit-tap-highlight-color: transparent;
-        }
+        .kp-icon-btn { background: none; border: none; color: inherit; line-height: 1; padding: 2px 4px; cursor: pointer; opacity: 0.65; font-family: inherit; display: inline-flex; align-items: center; justify-content: center; transition: opacity 0.2s ease, transform 0.2s ease, color 0.2s ease; transform: scale(1); transform-origin: center center; will-change: transform; backface-visibility: hidden; -webkit-font-smoothing: antialiased; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
         .kp-icon-btn svg { display: block; }
-        .kp-icon-btn:hover {
-            opacity: 1;
-            transform: scale(1.15);
-        }
-        .kp-icon-btn.kp-has-update {
-            color: #fbbf24 !important;
-            opacity: 1 !important;
-        }
-        #kp-settings-btn {
-            position: relative;
-        }
-        #kp-settings-btn.kp-has-update::after {
-            content: '';
-            position: absolute;
-            top: 3px;
-            right: 3px;
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: #fbbf24;
-            box-shadow: 0 0 5px rgba(251,191,36,0.8);
-            pointer-events: none;
-            z-index: 2;
-            animation: kp-dot-pulse 2.4s ease-in-out infinite;
-        }
-        @keyframes kp-dot-pulse {
-            0%, 100% { transform: scale(1); opacity: 1; }
-            50%      { transform: scale(1.25); opacity: 0.7; }
-        }
-        @keyframes kp-icon-pulse {
-            0%, 100% { transform: scale(1); }
-            50%      { transform: scale(1.15); }
-        }
-        #kp-update-open-btn.kp-has-update svg {
-            animation: kp-icon-pulse 1.8s ease-in-out infinite;
-            transform-origin: center;
-            transform-box: fill-box;
-        }
+        .kp-icon-btn:hover { opacity: 1; transform: scale(1.15); }
+        .kp-icon-btn.kp-has-update { color: #fbbf24 !important; opacity: 1 !important; }
+        #kp-settings-btn { position: relative; }
+        #kp-settings-btn.kp-has-update::after { content: ''; position: absolute; top: 3px; right: 3px; width: 8px; height: 8px; border-radius: 50%; background: #fbbf24; box-shadow: 0 0 5px rgba(251,191,36,0.8); pointer-events: none; z-index: 2; animation: kp-dot-pulse 2.4s ease-in-out infinite; }
+        @keyframes kp-dot-pulse { 0%,100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.25); opacity: 0.7; } }
+        @keyframes kp-icon-pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.15); } }
+        #kp-update-open-btn.kp-has-update svg { animation: kp-icon-pulse 1.8s ease-in-out infinite; transform-origin: center; transform-box: fill-box; }
 
-        /* ===== Тумблер темы (телефон) ===== */
-        .kp-theme-toggle {
-            background: none;
-            border: none;
-            padding: 0;
-            cursor: pointer;
-            display: inline-flex;
-            align-items: center;
-            touch-action: manipulation;
-            -webkit-tap-highlight-color: transparent;
-            outline: none;
-        }
-        .kp-theme-toggle-track {
-            position: relative;
-            display: inline-flex;
-            align-items: center;
-            justify-content: space-between;
-            width: 44px;
-            height: 24px;
-            border-radius: 12px;
-            background: rgba(127,127,127,0.25);
-            padding: 2px;
-            box-sizing: border-box;
-            transition: background 0.25s ease;
-        }
-        .kp-theme-toggle-thumb {
-            position: absolute;
-            top: 2px;
-            left: 2px;
-            width: 20px;
-            height: 20px;
-            border-radius: 50%;
-            background: #fff;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.35);
-            transition: transform 0.25s ease;
-            z-index: 2;
-        }
-        .kp-theme-toggle[data-theme="light"] .kp-theme-toggle-thumb {
-            transform: translateX(20px);
-        }
-        .kp-theme-toggle[data-theme="dark"] .kp-theme-toggle-thumb {
-            transform: translateX(0);
-        }
-        .kp-theme-toggle-icon {
-            position: relative;
-            z-index: 1;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 20px;
-            height: 20px;
-            color: rgba(127,127,127,0.85);
-            transition: color 0.25s ease;
-        }
-        .kp-theme-toggle[data-theme="dark"] .kp-theme-icon-moon {
-            color: #fbbf24;
-        }
-        .kp-theme-toggle[data-theme="light"] .kp-theme-icon-sun {
-            color: #f59e0b;
-        }
+        .kp-theme-toggle { background: none; border: none; padding: 0; cursor: pointer; display: inline-flex; align-items: center; touch-action: manipulation; -webkit-tap-highlight-color: transparent; outline: none; }
+        .kp-theme-toggle-track { position: relative; display: inline-flex; align-items: center; justify-content: space-between; width: 44px; height: 24px; border-radius: 12px; background: rgba(127,127,127,0.25); padding: 2px; box-sizing: border-box; transition: background 0.25s ease; }
+        .kp-theme-toggle-thumb { position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.35); transition: transform 0.25s ease; z-index: 2; }
+        .kp-theme-toggle[data-theme="light"] .kp-theme-toggle-thumb { transform: translateX(20px); }
+        .kp-theme-toggle[data-theme="dark"] .kp-theme-toggle-thumb { transform: translateX(0); }
+        .kp-theme-toggle-icon { position: relative; z-index: 1; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; color: rgba(127,127,127,0.85); transition: color 0.25s ease; }
+        .kp-theme-toggle[data-theme="dark"] .kp-theme-icon-moon { color: #fbbf24; }
+        .kp-theme-toggle[data-theme="light"] .kp-theme-icon-sun { color: #f59e0b; }
 
-        /* ===== Тумблер "Встроить" ===== */
-        .kp-embed-toggle {
-            background: none;
-            border: none;
-            padding: 0;
-            cursor: pointer;
-            display: inline-flex;
-            align-items: center;
-            touch-action: manipulation;
-            -webkit-tap-highlight-color: transparent;
-            outline: none;
-        }
-        .kp-embed-toggle-track {
-            position: relative;
-            display: inline-block;
-            width: 44px;
-            height: 24px;
-            border-radius: 12px;
-            background: rgba(127,127,127,0.25);
-            transition: background 0.25s ease;
-        }
-        .kp-embed-toggle[data-state="on"] .kp-embed-toggle-track {
-            background: #427552;
-        }
-        .kp-embed-toggle-thumb {
-            position: absolute;
-            top: 2px;
-            left: 2px;
-            width: 20px;
-            height: 20px;
-            border-radius: 50%;
-            background: #fff;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.35);
-            transition: transform 0.25s ease;
-        }
-        .kp-embed-toggle[data-state="on"] .kp-embed-toggle-thumb {
-            transform: translateX(20px);
-        }
+        .kp-embed-toggle { background: none; border: none; padding: 0; cursor: pointer; display: inline-flex; align-items: center; touch-action: manipulation; -webkit-tap-highlight-color: transparent; outline: none; }
+        .kp-embed-toggle-track { position: relative; display: inline-block; width: 44px; height: 24px; border-radius: 12px; background: rgba(127,127,127,0.25); transition: background 0.25s ease; }
+        .kp-embed-toggle[data-state="on"] .kp-embed-toggle-track { background: #427552; }
+        .kp-embed-toggle-thumb { position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.35); transition: transform 0.25s ease; }
+        .kp-embed-toggle[data-state="on"] .kp-embed-toggle-thumb { transform: translateX(20px); }
 
-        /* ===== Кастомный дропдаун каналов ===== */
-        .kp-dd-channel {
-            position: relative;
-            display: inline-flex;
-            align-items: center;
-            cursor: pointer;
-            user-select: none;
-            -webkit-tap-highlight-color: transparent;
-        }
-        .kp-dd-channel-trigger {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 4px 10px;
-            background: rgba(127,127,127,0.12);
-            border: 1px solid rgba(127,127,127,0.25);
-            border-radius: 20px;
-            color: inherit;
-            transition: border-color 0.15s, background 0.15s;
-            font-size: inherit;
-        }
-        .kp-dd-channel:hover .kp-dd-channel-trigger {
-            border-color: rgba(99,102,241,0.5);
-        }
-        .kp-dd-channel.open .kp-dd-channel-trigger {
-            border-color: #818cf8;
-            background: rgba(99,102,241,0.1);
-        }
-        .kp-dd-channel-chev {
-            opacity: 0.55;
-            transition: transform 0.2s;
-            display: block;
-        }
-        .kp-dd-channel.open .kp-dd-channel-chev { transform: rotate(180deg); }
-        .kp-dd-channel-menu {
-            position: absolute;
-            top: calc(100% + 4px);
-            right: 0;
-            border-radius: 12px;
-            padding: 4px;
-            display: none;
-            z-index: 100;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-            border: 1px solid rgba(127,127,127,0.25);
-            min-width: 100%;
-            white-space: nowrap;
-        }
+        .kp-dd-channel, .kp-dd-pos { position: relative; display: inline-flex; align-items: center; cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; }
+        .kp-dd-channel-trigger, .kp-dd-pos-trigger { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; background: rgba(127,127,127,0.12); border: 1px solid rgba(127,127,127,0.25); border-radius: 20px; color: inherit; transition: border-color 0.15s, background 0.15s; font-size: inherit; }
+        .kp-dd-channel:hover .kp-dd-channel-trigger, .kp-dd-pos:hover .kp-dd-pos-trigger { border-color: rgba(99,102,241,0.5); }
+        .kp-dd-channel.open .kp-dd-channel-trigger, .kp-dd-pos.open .kp-dd-pos-trigger { border-color: #818cf8; background: rgba(99,102,241,0.1); }
+        .kp-dd-channel-chev, .kp-dd-pos-chev { opacity: 0.55; transition: transform 0.2s; display: block; }
+        .kp-dd-channel.open .kp-dd-channel-chev, .kp-dd-pos.open .kp-dd-pos-chev { transform: rotate(180deg); }
+        .kp-dd-channel-menu, .kp-dd-pos-menu { position: absolute; top: calc(100% + 4px); right: 0; border-radius: 12px; padding: 4px; display: none; z-index: 100; box-shadow: 0 8px 24px rgba(0,0,0,0.5); border: 1px solid rgba(127,127,127,0.25); }
+        .kp-dd-channel-menu { min-width: 100%; white-space: nowrap; }
+        .kp-dd-pos-menu { gap: 2px; }
         .kp-dd-channel.open .kp-dd-channel-menu { display: block; }
-        .kp-dd-channel-item {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 6px 10px;
-            border-radius: 8px;
-            cursor: pointer;
-            color: inherit;
-            font-size: inherit;
-            transition: background 0.12s, color 0.12s;
-        }
-        .kp-dd-channel-item:hover {
-            background: rgba(127,127,127,0.15);
-        }
-        .kp-dd-channel-item.active {
-            background: rgba(99,102,241,0.15);
-            color: #818cf8;
-        }
-
-        /* ===== Кастомный дропдаун позиции ===== */
-        .kp-dd-pos {
-            position: relative;
-            display: inline-flex;
-            align-items: center;
-            cursor: pointer;
-            user-select: none;
-            -webkit-tap-highlight-color: transparent;
-        }
-        .kp-dd-pos-trigger {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 4px 10px;
-            background: rgba(127,127,127,0.12);
-            border: 1px solid rgba(127,127,127,0.25);
-            border-radius: 20px;
-            color: inherit;
-            transition: border-color 0.15s, background 0.15s;
-            font-size: inherit;
-        }
-        .kp-dd-pos:hover .kp-dd-pos-trigger {
-            border-color: rgba(99,102,241,0.5);
-        }
-        .kp-dd-pos.open .kp-dd-pos-trigger {
-            border-color: #818cf8;
-            background: rgba(99,102,241,0.1);
-        }
-        .kp-dd-pos-chev {
-            opacity: 0.55;
-            transition: transform 0.2s;
-            display: block;
-        }
-        .kp-dd-pos.open .kp-dd-pos-chev { transform: rotate(180deg); }
-        .kp-dd-pos-icon {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-        }
+        .kp-dd-pos.open .kp-dd-pos-menu { display: grid; }
+        .kp-dd-channel-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 8px; cursor: pointer; color: inherit; font-size: inherit; transition: background 0.12s, color 0.12s; }
+        .kp-dd-channel-item:hover { background: rgba(127,127,127,0.15); }
+        .kp-dd-channel-item.active { background: rgba(99,102,241,0.15); color: #818cf8; }
+        .kp-dd-pos-icon { display: inline-flex; align-items: center; justify-content: center; }
         .kp-dd-pos-icon svg { display: block; }
-        .kp-dd-pos-menu {
-            position: absolute;
-            top: calc(100% + 4px);
-            right: 0;
-            border-radius: 12px;
-            padding: 4px;
-            display: none;
-            z-index: 100;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-            border: 1px solid rgba(127,127,127,0.25);
-            gap: 2px;
-        }
-        .kp-dd-pos.open .kp-dd-pos-menu {
-            display: grid;
-        }
-        .kp-dd-pos-item {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 34px;
-            height: 34px;
-            border-radius: 8px;
-            cursor: pointer;
-            color: inherit;
-            opacity: 0.55;
-            transition: background 0.12s, opacity 0.12s, color 0.12s;
-        }
-        .kp-dd-pos-item:hover {
-            background: rgba(127,127,127,0.15);
-            opacity: 1;
-        }
-        .kp-dd-pos-item.active {
-            background: rgba(99,102,241,0.15);
-            color: #818cf8;
-            opacity: 1;
-        }
+        .kp-dd-pos-item { display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 8px; cursor: pointer; color: inherit; opacity: 0.55; transition: background 0.12s, opacity 0.12s, color 0.12s; }
+        .kp-dd-pos-item:hover { background: rgba(127,127,127,0.15); opacity: 1; }
+        .kp-dd-pos-item.active { background: rgba(99,102,241,0.15); color: #818cf8; opacity: 1; }
         .kp-dd-pos-item svg { display: block; }
 
-        .kp-update-icon {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            line-height: 1;
-            color: #818cf8;
-            margin: 2px 0 0;
-            transition: color 0.3s;
-        }
+        .kp-update-icon { display: flex; align-items: center; justify-content: center; line-height: 1; color: #818cf8; margin: 2px 0 0; transition: color 0.3s; }
         .kp-update-icon svg { display: block; }
-        .kp-update-icon.ok  { color: #6ee7a7; }
+        .kp-update-icon.ok { color: #6ee7a7; }
         .kp-update-icon.new { color: #fbbf24; }
         .kp-update-icon.err { color: #ff8888; }
-        .kp-update-icon.spin {
-            animation: kp-rotate 1.2s linear infinite;
-        }
-        @keyframes kp-rotate {
-            from { transform: rotate(0deg); }
-            to   { transform: rotate(360deg); }
-        }
-        .kp-update-title {
-            text-align: center;
-            font-size: 14px;
-            font-weight: 600;
-            line-height: 1.3;
-            margin-top: 2px;
-        }
-        .kp-update-title.ok  { color: #6ee7a7; }
+        .kp-update-icon.spin { animation: kp-rotate 1.2s linear infinite; }
+        @keyframes kp-rotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .kp-update-title { text-align: center; font-size: 14px; font-weight: 600; line-height: 1.3; margin-top: 2px; }
+        .kp-update-title.ok { color: #6ee7a7; }
         .kp-update-title.new { color: #fbbf24; }
         .kp-update-title.err { color: #ff8888; }
-
-        .kp-update-versions {
-            text-align: center;
-            font-size: 12px;
-            line-height: 1.55;
-            color: #94a3b8;
-            font-weight: 500;
-            margin-top: 4px;
-            margin-bottom: 2px;
-        }
-        .kp-update-versions .line {
-            display: block;
-            white-space: nowrap;
-        }
+        .kp-update-versions { text-align: center; font-size: 12px; line-height: 1.55; color: #94a3b8; font-weight: 500; margin-top: 4px; margin-bottom: 2px; }
+        .kp-update-versions .line { display: block; white-space: nowrap; }
         .kp-update-versions .old { color: #94a3b8; }
         .kp-update-versions .new { color: #fbbf24; }
-        .kp-update-versions .arrow {
-            color: #818cf8;
-            margin: 0 5px;
-            font-size: 12px;
-        }
+        .kp-update-versions .arrow { color: #818cf8; margin: 0 5px; font-size: 12px; }
         .kp-update-versions .val { color: inherit; }
         .kp-update-versions .val.ok { color: #6ee7a7; }
+        .kp-commit-card { display: none; flex-direction: column; background: rgba(127,127,127,0.08); border: 1px solid rgba(127,127,127,0.18); border-radius: 12px; padding: 6px 10px; font-size: 11px; line-height: 1.4; color: inherit; overflow: hidden; }
+        .kp-commit-card.visible { display: flex; }
+        .kp-commit-header { font-size: 12px; font-weight: 600; color: inherit; margin-bottom: 3px; padding-bottom: 3px; border-bottom: 1px solid rgba(127,127,127,0.15); letter-spacing: 0.1px; flex-shrink: 0; }
+        .kp-commit-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-right: 4px; scrollbar-width: thin; scrollbar-color: rgba(127,127,127,0.3) transparent; }
+        .kp-commit-scroll::-webkit-scrollbar { width: 4px; }
+        .kp-commit-scroll::-webkit-scrollbar-thumb { background: rgba(127,127,127,0.3); border-radius: 2px; }
+        .kp-commit-text { color: #94a3b8; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; }
+        .kp-update-actions { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+        .kp-update-actions .kp-btn-primary { background: #427552; border: none; color: #fff; padding: 8px 0; border-radius: 20px; font-weight: 600; cursor: pointer; font-size: 13px; font-family: inherit; transition: opacity 0.15s; width: 100%; }
+        .kp-update-actions .kp-btn-primary:hover { opacity: 0.9; }
+        .kp-update-actions .kp-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+        .kp-update-actions .kp-btn-primary.warn { background: #c47d2a; }
 
-        .kp-commit-card {
+        /* ============================================================ */
+        /* Панель закладок — CSS-переменные + data-theme */
+        /* ============================================================ */
+        .kp-saved-panel {
+            --kp-bg: #f5f5f5;
+            --kp-text: #1a1a1a;
+            --kp-border: rgba(0,0,0,0.1);
+            --kp-tab-bg: rgba(0,0,0,0.05);
+            --kp-tab-border: rgba(0,0,0,0.1);
+            --kp-tab-color: rgba(0,0,0,0.7);
+            --kp-tab-active-bg: rgba(99,102,241,0.15);
+            --kp-tab-active-border: #6366f1;
+            --kp-tab-active-color: #4f46e5;
+            --kp-action-bg: rgba(255,255,255,0.75);
+            --kp-action-border: rgba(0,0,0,0.1);
+            --kp-action-color: rgba(0,0,0,0.75);
+            --kp-action-hover-bg: rgba(99,102,241,0.15);
+            --kp-action-hover-color: #4f46e5;
+            --kp-menu-bg: #ffffff;
+            --kp-menu-border: rgba(0,0,0,0.1);
+            --kp-input-bg: rgba(0,0,0,0.04);
+            --kp-input-color: #1a1a1a;
+            --kp-input-border: rgba(0,0,0,0.15);
+            --kp-muted: #64748b;
+            --kp-menu-item-hover: rgba(0,0,0,0.06);
+            --kp-menu-item-color: rgba(0,0,0,0.8);
+            --kp-menu-item-active-bg: rgba(99,102,241,0.12);
+            --kp-menu-item-active-color: #4f46e5;
+
+            position: absolute;
+            z-index: 1000001;
+            background: var(--kp-bg);
+            color: var(--kp-text);
+            font-family: 'Segoe UI', Arial, sans-serif;
+            font-size: 13px;
+            width: 260px !important;
+            max-width: calc(100vw - 24px);
             display: none;
             flex-direction: column;
-            background: rgba(127,127,127,0.08);
-            border: 1px solid rgba(127,127,127,0.18);
-            border-radius: 12px;
-            padding: 6px 10px;
-            font-size: 11px;
-            line-height: 1.4;
-            color: inherit;
-            overflow: hidden;
+            border-radius: 20px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+            box-sizing: border-box;
         }
-        .kp-commit-card.visible { display: flex; }
-        .kp-commit-header {
-            font-size: 12px;
-            font-weight: 600;
-            color: inherit;
-            margin-bottom: 3px;
-            padding-bottom: 3px;
-            border-bottom: 1px solid rgba(127,127,127,0.15);
-            letter-spacing: 0.1px;
-            flex-shrink: 0;
-        }
-        .kp-commit-scroll {
-            flex: 1 1 auto;
-            min-height: 0;
-            overflow-y: auto;
-            padding-right: 4px;
-            scrollbar-width: thin;
-            scrollbar-color: rgba(127,127,127,0.3) transparent;
-        }
-        .kp-commit-scroll::-webkit-scrollbar { width: 4px; }
-        .kp-commit-scroll::-webkit-scrollbar-thumb {
-            background: rgba(127,127,127,0.3);
-            border-radius: 2px;
-        }
-        .kp-commit-text {
-            color: #94a3b8;
-            white-space: pre-wrap;
-            word-wrap: break-word;
-            overflow-wrap: break-word;
+        .kp-saved-panel[data-theme="dark"] {
+            --kp-bg: #1f1f1f;
+            --kp-text: #ffffff;
+            --kp-border: rgba(127,127,127,0.15);
+            --kp-tab-bg: rgba(127,127,127,0.12);
+            --kp-tab-border: rgba(127,127,127,0.2);
+            --kp-tab-color: rgba(255,255,255,0.75);
+            --kp-tab-active-bg: rgba(99,102,241,0.2);
+            --kp-tab-active-border: #818cf8;
+            --kp-tab-active-color: #a5b4fc;
+            --kp-action-bg: rgba(31,31,31,0.55);
+            --kp-action-border: rgba(127,127,127,0.25);
+            --kp-action-color: rgba(255,255,255,0.85);
+            --kp-action-hover-bg: rgba(99,102,241,0.35);
+            --kp-action-hover-color: #ffffff;
+            --kp-menu-bg: #1f1f1f;
+            --kp-menu-border: rgba(127,127,127,0.3);
+            --kp-input-bg: rgba(0,0,0,0.3);
+            --kp-input-color: #ffffff;
+            --kp-input-border: rgba(127,127,127,0.3);
+            --kp-muted: #64748b;
+            --kp-menu-item-hover: rgba(127,127,127,0.15);
+            --kp-menu-item-color: rgba(255,255,255,0.8);
+            --kp-menu-item-active-bg: rgba(99,102,241,0.15);
+            --kp-menu-item-active-color: #a5b4fc;
         }
 
-        .kp-update-actions {
+        .kp-saved-header {
             display: flex;
-            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
             gap: 6px;
-            margin-top: 4px;
+            padding: 4px 10px 4px;
+            border-bottom: 1px solid var(--kp-border);
+            flex-shrink: 0;
+            border-radius: 20px 20px 0 0;
+            background: var(--kp-bg);
+            box-sizing: border-box;
         }
-        .kp-update-actions .kp-btn-primary {
+        .kp-saved-title { font-weight: 600; font-size: 13px; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--kp-text); }
+        .kp-saved-actions { display: flex; gap: 4px; align-items: center; flex-shrink: 0; position: relative; }
+        .kp-saved-btn {
             background: #427552;
             border: none;
             color: #fff;
-            padding: 8px 0;
-            border-radius: 20px;
-            font-weight: 600;
+            padding: 0 8px;
+            height: 22px;
+            border-radius: 14px;
+            font-size: 12px;
             cursor: pointer;
-            font-size: 13px;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
             font-family: inherit;
             transition: opacity 0.15s;
+            box-sizing: border-box;
+            line-height: 1;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
+        @media (max-width: 500px) {
+            .kp-saved-btn { height: 30px; font-size: 13px; }
+        }
+        .kp-saved-btn:hover { opacity: 0.9; }
+        .kp-saved-btn.icon-only { padding: 0 8px; }
+
+        .kp-tabs-bar {
+            position: relative;
+            display: flex;
+            align-items: center;
+            padding: 4px 0;
+            border-bottom: 1px solid var(--kp-border);
+            flex-shrink: 0;
             width: 100%;
+            box-sizing: border-box;
         }
-        .kp-update-actions .kp-btn-primary:hover { opacity: 0.9; }
-        .kp-update-actions .kp-btn-primary:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
+        .kp-tabs-scroll {
+            display: flex;
+            gap: 4px;
+            overflow-x: auto;
+            overflow-y: hidden;
+            width: 100%;
+            padding: 0 10px;
+            padding-right: 80px;
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+            -webkit-overflow-scrolling: touch;
+            box-sizing: border-box;
         }
-        .kp-update-actions .kp-btn-primary.warn { background: #c47d2a; }
+        .kp-tabs-scroll::-webkit-scrollbar { display: none; }
+
+        .kp-tab {
+            position: relative;
+            flex-shrink: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: flex-start;
+            height: 22px;
+            padding: 0 10px;
+            background: var(--kp-tab-bg);
+            border: 1px solid var(--kp-tab-border);
+            border-radius: 14px;
+            font-size: 13px;
+            font-weight: 600;
+            line-height: 22px;
+            color: var(--kp-tab-color);
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+            transition: background 0.15s, border-color 0.15s, color 0.15s;
+            -webkit-tap-highlight-color: transparent;
+            max-width: 135px;
+            overflow: hidden;
+            box-sizing: border-box;
+        }
+        @media (max-width: 500px) {
+            .kp-tab { height: 30px; line-height: 30px; padding: 0 10px; }
+        }
+        .kp-tab:hover { background: var(--kp-menu-item-hover); color: var(--kp-text); }
+        .kp-tab.active {
+            background: var(--kp-tab-active-bg);
+            border-color: var(--kp-tab-active-border);
+            color: var(--kp-tab-active-color);
+        }
+        .kp-tab > span {
+            display: block;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 100%;
+            line-height: inherit;
+            text-align: left;
+        }
+
+        .kp-tabs-actions {
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            display: flex;
+            gap: 4px;
+            z-index: 10;
+            pointer-events: none;
+        }
+        .kp-tabs-actions > * { pointer-events: auto; }
+        .kp-tab-action-btn {
+            height: 22px;
+            padding: 0 8px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--kp-action-bg);
+            border: 1px solid var(--kp-action-border);
+            border-radius: 14px;
+            color: var(--kp-action-color);
+            cursor: pointer;
+            transition: background 0.15s, color 0.15s, border-color 0.15s;
+            -webkit-tap-highlight-color: transparent;
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+            box-sizing: border-box;
+        }
+        @media (max-width: 500px) {
+            .kp-tab-action-btn { height: 30px; }
+        }
+        .kp-tab-action-btn:hover {
+            background: var(--kp-action-hover-bg);
+            color: var(--kp-action-hover-color);
+        }
+        .kp-tab-action-btn svg { display: block; }
+
+        .kp-saved-panel.share-open .kp-tabs-actions { display: none; }
+        .kp-saved-panel.share-open .kp-tabs-scroll { padding-right: 10px; }
+
+        @media (max-width: 500px) {
+            .kp-tabs-scroll { padding-right: 86px; }
+        }
+
+        .kp-sort-wrap { position: relative; }
+        .kp-sort-menu { position: absolute; top: calc(100% + 6px); right: 0; min-width: 230px; background: var(--kp-menu-bg); border: 1px solid var(--kp-menu-border); border-radius: 20px; padding: 4px; z-index: 1000; box-shadow: 0 8px 24px rgba(0,0,0,0.6); display: none; color: var(--kp-text); }
+        .kp-sort-menu.open { display: block; }
+        .kp-sort-section { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--kp-muted); padding: 4px 8px 2px; font-weight: 600; }
+        .kp-sort-item { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 14px; cursor: pointer; font-size: 12px; color: var(--kp-menu-item-color); transition: background 0.12s, color 0.12s; }
+        .kp-sort-item:hover { background: var(--kp-menu-item-hover); color: var(--kp-text); }
+        .kp-sort-item.active { background: var(--kp-menu-item-active-bg); color: var(--kp-menu-item-active-color); }
+        .kp-sort-item svg { flex-shrink: 0; }
+        .kp-sort-item.danger { color: #ff8888; }
+        .kp-sort-item.danger:hover { background: rgba(220,38,38,0.2); color: #ffb0b0; }
+        .kp-sort-item.disabled { opacity: 0.35; pointer-events: none; }
+        .kp-sort-divider { height: 1px; background: var(--kp-menu-border); margin: 2px 4px; opacity: 0.6; }
+
+        .kp-rename-row { display: flex; gap: 2px; align-items: center; padding: 2px 2px; }
+        .kp-rename-input { flex: 1 1 auto; min-width: 0; padding: 6px 10px; background: var(--kp-input-bg); border: 1px solid var(--kp-input-border); border-radius: 14px; color: var(--kp-input-color); font-size: 12px; font-family: inherit; outline: none; }
+        .kp-rename-input:focus { border-color: #818cf8; }
+
+        .kp-rename-apply, .kp-rename-delete { flex-shrink: 0; width: 28px; height: 28px; background: none; border: none; padding: 0; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: opacity 0.15s, transform 0.15s; -webkit-tap-highlight-color: transparent; }
+        .kp-rename-apply { color: #22c55e; }
+        .kp-rename-delete { color: #ef4444; }
+        .kp-rename-apply:hover, .kp-rename-delete:hover { opacity: 0.75; transform: scale(1.1); }
+        .kp-rename-apply svg, .kp-rename-delete svg { display: block; width: 20px; height: 20px; }
+
+        .kp-add-wrap { position: relative; }
+        .kp-add-popup { position: absolute; top: calc(100% + 6px); right: 0; width: 220px; background: var(--kp-menu-bg); border: 1px solid var(--kp-menu-border); border-radius: 20px; padding: 6px; z-index: 1000; box-shadow: 0 8px 24px rgba(0,0,0,0.6); display: none; color: var(--kp-text); }
+        .kp-add-popup.open { display: block; }
+        .kp-add-input-wrap { position: relative; }
+        .kp-add-input { width: 100%; padding: 8px 44px 8px 10px; background: var(--kp-input-bg); border: 1px solid var(--kp-input-border); border-radius: 14px; color: var(--kp-input-color); font-size: 13px; font-family: inherit; outline: none; box-sizing: border-box; }
+        .kp-add-input:focus { border-color: #818cf8; }
+        .kp-add-input::placeholder { color: var(--kp-muted); }
+        .kp-add-counter { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 10px; color: var(--kp-muted); pointer-events: none; font-family: inherit; }
+
+        .kp-saved-list { display: flex; flex-direction: column; gap: 4px; padding: 4px; overflow-y: auto; max-height: 208px; flex: 1 1 auto; min-height: 0; border-radius: 0 0 20px 20px; box-sizing: border-box; }
+        .kp-saved-list::-webkit-scrollbar { display: none; }
+        .kp-saved-list { scrollbar-width: none; -ms-overflow-style: none; }
+        .kp-saved-list .kp-empty { color: var(--kp-muted); text-align: center; padding: 8px; font-size: 12px; }
+
+        .kp-share-view { display: none; flex-direction: column; gap: 8px; padding: 8px 6px; border-radius: 0 0 20px 20px; box-sizing: border-box; max-height: 208px; overflow-y: auto; }
+        .kp-share-view.open { display: flex; }
+        .kp-share-toggle { display: flex; gap: 2px; padding: 2px; background: var(--kp-tab-bg); border-radius: 14px; }
+        .kp-share-toggle button { flex: 1 1 0; padding: 6px 8px; border: none; background: transparent; color: var(--kp-tab-color); border-radius: 12px; font-size: 11px; font-weight: 500; font-family: inherit; cursor: pointer; transition: background 0.15s, color 0.15s; -webkit-tap-highlight-color: transparent; }
+        .kp-share-toggle button:hover { color: var(--kp-text); }
+        .kp-share-toggle button.active { background: var(--kp-tab-active-bg); color: var(--kp-tab-active-color); font-weight: 600; }
+        .kp-share-link-row { display: flex; gap: 4px; }
+        .kp-share-link-input { flex: 1 1 auto; min-width: 0; padding: 6px 8px; background: var(--kp-input-bg); border: 1px solid var(--kp-input-border); border-radius: 14px; color: var(--kp-input-color); font-size: 11px; font-family: inherit; outline: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .kp-share-copy { flex-shrink: 0; width: 34px; background: #427552; border: none; border-radius: 14px; color: #fff; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: opacity 0.15s; }
+        .kp-share-copy:hover { opacity: 0.9; }
+        .kp-share-copy svg { display: block; }
+        .kp-share-copy:disabled { opacity: 0.4 !important; cursor: not-allowed !important; }
+        .kp-share-qr-btn { width: 100%; padding: 8px 0; background: #427552; border: none; border-radius: 14px; color: #fff; font-weight: 600; font-size: 12px; font-family: inherit; cursor: pointer; transition: opacity 0.15s; display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
+        .kp-share-qr-btn:hover { opacity: 0.9; }
+        .kp-share-qr-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .kp-share-actions { display: flex; gap: 4px; }
+        .kp-share-action-btn { flex: 1 1 0; padding: 8px 10px; border: none; border-radius: 14px; background: var(--kp-tab-active-bg); color: var(--kp-tab-active-color); font-weight: 600; cursor: pointer; font-size: 12px; font-family: inherit; touch-action: manipulation; -webkit-tap-highlight-color: transparent; display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
+        .kp-share-action-btn:hover { background: var(--kp-action-hover-bg); color: var(--kp-action-hover-color); }
+        .kp-share-info { font-size: 10.5px; color: var(--kp-muted); text-align: center; line-height: 1.4; }
     `;
 
     let settings = loadSettings();
@@ -1178,9 +849,7 @@
                 maxWidth: 'calc(100vw - 32px)', boxSizing: 'border-box', textAlign: 'center'
             });
         }
-        if (!toastElement.parentNode && document.body) {
-            document.body.appendChild(toastElement);
-        }
+        if (!toastElement.parentNode && document.body) document.body.appendChild(toastElement);
         return toastElement;
     }
 
@@ -1190,20 +859,14 @@
         toast.textContent = message;
         toast.style.opacity = '1';
         if (toastTimer) clearTimeout(toastTimer);
-        toastTimer = setTimeout(() => {
-            toast.style.opacity = '0';
-        }, 2000);
+        toastTimer = setTimeout(() => { toast.style.opacity = '0'; }, 2000);
     }
 
     function whenReady(fn) {
-        if (document.body) {
-            fn();
-        } else {
+        if (document.body) fn();
+        else {
             const obs = new MutationObserver(() => {
-                if (document.body) {
-                    obs.disconnect();
-                    fn();
-                }
+                if (document.body) { obs.disconnect(); fn(); }
             });
             obs.observe(document.documentElement, { childList: true });
         }
@@ -1211,12 +874,7 @@
 
     function escapeHtml(str) {
         if (str == null) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     function compareVersions(a, b) {
@@ -1224,17 +882,13 @@
         const pb = String(b).split('.').map(n => parseInt(n, 10) || 0);
         const len = Math.max(pa.length, pb.length);
         for (let i = 0; i < len; i++) {
-            const va = pa[i] || 0;
-            const vb = pb[i] || 0;
+            const va = pa[i] || 0, vb = pb[i] || 0;
             if (va < vb) return -1;
             if (va > vb) return 1;
         }
         return 0;
     }
 
-    // ============================================================
-    // SVG-иконки (Lucide).
-    // ============================================================
     function svgIcon(name, size) {
         const s = size || 20;
         const sw = s <= 14 ? 2.4 : s <= 18 ? 2.2 : 2;
@@ -1262,7 +916,15 @@
             x: `<svg ${head} fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`,
             sun: `<svg ${head} fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>`,
             moon: `<svg ${head} fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`,
-            chevronDown: `<svg ${head} fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`
+            chevronDown: `<svg ${head} fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`,
+            trash: `<svg ${head} fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>`,
+            plus: `<svg ${head} fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
+            filter: `<svg ${head} fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="11" y2="18"/></svg>`,
+            sortDateDesc: `<svg ${head} fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`,
+            sortDateAsc: `<svg ${head} fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>`,
+            sortNameAsc: `<svg ${head} fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h12M3 12h8M3 18h4"/><path d="M19 12v6l2-2"/><path d="M19 18l-2-2"/></svg>`,
+            sortNameDesc: `<svg ${head} fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h4M3 12h8M3 18h12"/><path d="M19 12v6l2-2"/><path d="M19 18l-2-2"/></svg>`,
+            sortRating: `<svg ${head} fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15 8.5 22 9.3 17 14 18.2 21 12 17.8 5.8 21 7 14 2 9.3 9 8.5 12 2"/></svg>`
         };
         return icons[name] || '';
     }
@@ -1287,14 +949,63 @@
         return 16;
     }
 
+    // ============ Вкладки ============
+    function loadTabs() {
+        try {
+            const raw = localStorage.getItem(CONFIG.TABS_STORAGE_KEY);
+            if (raw) {
+                const arr = JSON.parse(raw);
+                if (Array.isArray(arr) && arr.length > 0) {
+                    return arr.map(t => ({
+                        id: String(t.id || ('t' + Date.now() + Math.random())),
+                        name: String(t.name || CONFIG.DEFAULT_TAB_NAME).slice(0, CONFIG.TAB_NAME_MAX),
+                        sort: String(t.sort || 'date-desc')
+                    }));
+                }
+            }
+        } catch (e) {}
+        return [{ id: CONFIG.DEFAULT_TAB_ID, name: CONFIG.DEFAULT_TAB_NAME, sort: 'date-desc' }];
+    }
+
+    function saveTabs() {
+        try { localStorage.setItem(CONFIG.TABS_STORAGE_KEY, JSON.stringify(tabs)); } catch (e) {}
+    }
+
+    function loadActiveTabId() {
+        try {
+            const raw = localStorage.getItem(CONFIG.ACTIVE_TAB_KEY);
+            if (raw && tabs.some(t => t.id === raw)) return raw;
+        } catch (e) {}
+        return tabs[0].id;
+    }
+
+    function saveActiveTabId() {
+        try { localStorage.setItem(CONFIG.ACTIVE_TAB_KEY, activeTabId); } catch (e) {}
+    }
+
+    function getActiveTab() {
+        return tabs.find(t => t.id === activeTabId) || tabs[0];
+    }
+
+    function migrateOldBookmarks() {
+        try {
+            const movies = JSON.parse(localStorage.getItem(CONFIG.SAVED_STORAGE_KEY) || '[]');
+            if (!Array.isArray(movies) || movies.length === 0) return;
+            let changed = false;
+            movies.forEach(m => {
+                if (!m.tabId) { m.tabId = tabs[0].id; changed = true; }
+            });
+            if (changed) localStorage.setItem(CONFIG.SAVED_STORAGE_KEY, JSON.stringify(movies));
+        } catch (e) {}
+    }
+
+    let tabs = loadTabs();
+    let activeTabId = loadActiveTabId();
+    migrateOldBookmarks();
+
     function saveUpdateCache(result, state) {
         try {
-            localStorage.setItem(CONFIG.UPDATE_CACHE_KEY, JSON.stringify({
-                ts: Date.now(),
-                state,
-                result,
-                localVersion: LOCAL_META.version
-            }));
+            localStorage.setItem(CONFIG.UPDATE_CACHE_KEY, JSON.stringify({ ts: Date.now(), state, result, localVersion: LOCAL_META.version }));
         } catch (e) {}
     }
 
@@ -1307,33 +1018,20 @@
             const ttl = data.state === 'new' ? CONFIG.NEW_CACHE_TTL : CONFIG.OK_CACHE_TTL;
             if (Date.now() - data.ts > ttl) return null;
             return data;
-        } catch (e) {
-            return null;
-        }
+        } catch (e) { return null; }
     }
 
     function gmFetch(url, options = {}) {
         return new Promise((resolve, reject) => {
             let settled = false;
-            const finish = (fn, arg) => {
-                if (settled) return;
-                settled = true;
-                fn(arg);
-            };
+            const finish = (fn, arg) => { if (settled) return; settled = true; fn(arg); };
             const req = {
                 method: options.method || 'GET',
                 url,
                 headers: options.headers || {},
                 responseType: options.responseType || 'text',
                 timeout: options.timeout || 20000,
-                onload: (res) => finish(resolve, {
-                    ok: res.status >= 200 && res.status < 300,
-                    status: res.status,
-                    statusText: res.statusText,
-                    responseText: res.responseText,
-                    response: res.response,
-                    headers: res.responseHeaders || ''
-                }),
+                onload: (res) => finish(resolve, { ok: res.status >= 200 && res.status < 300, status: res.status, statusText: res.statusText, responseText: res.responseText, response: res.response, headers: res.responseHeaders || '' }),
                 onerror: () => finish(reject, new Error('Network error')),
                 ontimeout: () => finish(reject, new Error('Timeout'))
             };
@@ -1345,16 +1043,10 @@
         const url = CONFIG.VERSION_JSON_URL + '?t=' + Date.now();
         const res = await gmFetch(url);
         if (!res.ok) throw new Error('HTTP ' + res.status);
-
         let data;
-        try {
-            data = JSON.parse(res.responseText || '');
-        } catch (e) {
-            throw new Error('Некорректный version.json');
-        }
-
+        try { data = JSON.parse(res.responseText || ''); }
+        catch (e) { throw new Error('Некорректный version.json'); }
         if (!data || !data.version) throw new Error('В version.json нет поля version');
-
         return {
             remoteVersion: String(data.version).trim(),
             remoteDate: String(data.date || '').trim() || '—',
@@ -1385,28 +1077,28 @@
         if (savedPanel && savedPanel.style.display === 'flex') {
             if (!saveBtn?.contains(e.target) && !savedPanel.contains(e.target)) {
                 savedPanel.style.display = 'none';
-                const shareView = document.getElementById('kp-share-view');
-                const listView = document.getElementById('kp-saved-list');
-                if (shareView && listView && shareView.style.display !== 'none') {
-                    shareView.style.display = 'none';
-                    listView.style.display = 'flex';
-                }
+                // Сброс share-view, чтобы при следующем открытии закладок
+                // показывался обычный список, а не окно «Поделиться».
+                if (savedPanel._resetShareView) savedPanel._resetShareView();
             }
         }
 
         const openSelect = document.querySelector('.kp-select.open');
-        if (openSelect && !openSelect.contains(e.target)) {
-            openSelect.classList.remove('open');
-        }
-
+        if (openSelect && !openSelect.contains(e.target)) openSelect.classList.remove('open');
         const openPosDd = document.querySelector('.kp-dd-pos.open');
-        if (openPosDd && !openPosDd.contains(e.target)) {
-            openPosDd.classList.remove('open');
-        }
-
+        if (openPosDd && !openPosDd.contains(e.target)) openPosDd.classList.remove('open');
         const openChDd = document.querySelector('.kp-dd-channel.open');
-        if (openChDd && !openChDd.contains(e.target)) {
-            openChDd.classList.remove('open');
+        if (openChDd && !openChDd.contains(e.target)) openChDd.classList.remove('open');
+
+        const sortMenu = document.getElementById('kp-sort-menu');
+        const sortBtn = document.getElementById('kp-sort-btn-el');
+        if (sortMenu && sortMenu.classList.contains('open') && !sortMenu.contains(e.target) && !sortBtn?.contains(e.target)) {
+            sortMenu.classList.remove('open');
+        }
+        const addPopup = document.getElementById('kp-add-popup');
+        const addBtn = document.getElementById('kp-add-btn-el');
+        if (addPopup && addPopup.classList.contains('open') && !addPopup.contains(e.target) && !addBtn?.contains(e.target)) {
+            addPopup.classList.remove('open');
         }
     }, true);
 
@@ -1420,37 +1112,22 @@
                 let btnVertical = parsed.btnVertical || 'middle';
                 let embedMode = 'embedMode' in parsed ? parsed.embedMode : true;
                 let phoneTheme = parsed.phoneTheme || 'dark';
-
                 if (isPhone) {
                     embedMode = false;
-                    if (btnVertical === 'top') {
-                        btnVertical = 'middle';
-                    }
+                    if (btnVertical === 'top') btnVertical = 'middle';
                 }
-
                 return { targetDomain, btnPosition, btnVertical, embedMode, phoneTheme };
             }
         } catch (e) {}
-        return {
-            targetDomain: CONFIG.DEFAULT_DOMAIN,
-            btnPosition: 'left',
-            btnVertical: 'middle',
-            embedMode: !isPhone,
-            phoneTheme: 'dark'
-        };
+        return { targetDomain: CONFIG.DEFAULT_DOMAIN, btnPosition: 'left', btnVertical: 'middle', embedMode: !isPhone, phoneTheme: 'dark' };
     }
 
     function saveSettings() {
-        try {
-            localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(settings));
-        } catch (e) {}
+        try { localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(settings)); } catch (e) {}
     }
 
     function isFilmOrSeriesPage(url = window.location.href) {
-        return /\/film\/\d+/.test(url) ||
-               /\/series\/\d+/.test(url) ||
-               /\/tv\/\d+/.test(url) ||
-               /\/episode\/\d+/.test(url);
+        return /\/film\/\d+/.test(url) || /\/series\/\d+/.test(url) || /\/tv\/\d+/.test(url) || /\/episode\/\d+/.test(url);
     }
 
     function getChannelName(domain) {
@@ -1458,26 +1135,15 @@
         return ch ? ch.name : domain;
     }
 
-    function isMirrorDomain() {
-        return matchChannelDomain(host);
-    }
+    function isMirrorDomain() { return matchChannelDomain(host); }
 
     function applyBlockedStyles() {
         if (!document.getElementById('shell')) return;
         injectStyleWhenHeadReady('kp-blocked-style', BLOCKED_PAGE_STYLES);
-
         const shell = document.getElementById('shell');
         const textDiv = shell.querySelector('.text');
         if (textDiv) {
-            textDiv.innerHTML = `
-                <b>Выбранный Вами фильм или сериал удален по решению правообладателя.</b>
-                <br><br>
-                Вы можете выбрать другой фильм, сериал или канал в настройках.
-                <br><br>
-                Приносим извинения за неудобства, надеемся на Ваше понимание.
-                <br><br>
-                С уважением, Кинопоиск [Free].
-            `;
+            textDiv.innerHTML = `<b>Выбранный Вами фильм или сериал удален по решению правообладателя.</b><br><br>Вы можете выбрать другой фильм, сериал или канал в настройках.<br><br>Приносим извинения за неудобства, надеемся на Ваше понимание.<br><br>С уважением, Кинопоиск [Free].`;
         }
         const footerLinks = shell.querySelector('.footer-links');
         if (footerLinks) {
@@ -1486,9 +1152,7 @@
                 const homeBtn = document.createElement('button');
                 homeBtn.className = 'kp-home-btn';
                 homeBtn.textContent = '← На главную';
-                homeBtn.addEventListener('click', () => {
-                    window.location.href = CONFIG.KP_HOME_URL;
-                });
+                homeBtn.addEventListener('click', () => { window.location.href = CONFIG.KP_HOME_URL; });
                 footerLinks.appendChild(homeBtn);
             }
         }
@@ -1498,16 +1162,10 @@
     function initBlockedPageObserver() {
         if (!isBlockedPage) return;
         const observer = new MutationObserver((mutations, obs) => {
-            if (document.getElementById('shell')) {
-                obs.disconnect();
-                applyBlockedStyles();
-            }
+            if (document.getElementById('shell')) { obs.disconnect(); applyBlockedStyles(); }
         });
         observer.observe(document.documentElement, { childList: true, subtree: true });
-        if (document.getElementById('shell')) {
-            observer.disconnect();
-            applyBlockedStyles();
-        }
+        if (document.getElementById('shell')) { observer.disconnect(); applyBlockedStyles(); }
     }
     initBlockedPageObserver();
 
@@ -1526,15 +1184,12 @@
     }
 
     function addStylesIfNeeded() {
-        if (!document.getElementById('kp-alfa-style')) {
-            injectStyleWhenHeadReady('kp-alfa-style', ALFA_STYLES_GAMMA_TANGO);
-        }
+        if (!document.getElementById('kp-alfa-style')) injectStyleWhenHeadReady('kp-alfa-style', ALFA_STYLES_GAMMA_TANGO);
     }
 
     function getKinoboxElements(type) {
         const isTango = type === 'tango';
         let iframeContainer, menuItems, activeClass;
-
         if (isTango) {
             iframeContainer = document.querySelector('.kinobox__iframeWrapper');
             menuItems = [...document.querySelectorAll('.kinobox__menuItem')];
@@ -1549,16 +1204,11 @@
                 activeClass = 'kinobox__menuItem--active';
             }
         }
-
         return { iframeContainer, menuItems, activeClass };
     }
 
     function buildKinoboxPage(iframeContainer, menuItems, kpId, movie, activeClass) {
-        if (!iframeContainer || menuItems.length === 0) {
-            showBody();
-            return;
-        }
-
+        if (!iframeContainer || menuItems.length === 0) { showBody(); return; }
         const container = document.createElement('div');
         container.id = 'kp-alfa-page';
         container.innerHTML = `
@@ -1573,15 +1223,9 @@
                         <div class="kp-select-menu" id="kp-select-menu"></div>
                     </div>
                 </div>
-                <div class="vpn-warning">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
-                    Плеер можно выбрать другой, нажмите на список
-                </div>
+                <div class="vpn-warning"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>Плеер можно выбрать другой, нажмите на список</div>
                 <div class="player-wrap" id="kp-player-wrap"></div>
-                <div class="vpn-warning">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
-                    VPN может мешать воспроизведению
-                </div>
+                <div class="vpn-warning"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>VPN может мешать воспроизведению</div>
             </div>
             <div class="movie-info">
                 <div class="movie-info-inner">
@@ -1590,28 +1234,22 @@
                         <h1 class="movie-title"></h1><div class="movie-orig"></div><div class="movie-meta"></div><div class="movie-rows"></div><div class="movie-desc"></div>
                     </div>
                 </div>
-            </div>
-        `;
-
+            </div>`;
         const posterImg = container.querySelector('#kp-movie-poster');
         posterImg.src = `https://kinopoiskapiunofficial.tech/images/posters/kp_small/${kpId}.jpg`;
         posterImg.onerror = () => { posterImg.style.display = 'none'; };
-
         if (movie) {
             container.querySelector('.movie-title').textContent = movie.name;
             container.querySelector('.movie-orig').textContent = movie.year;
         }
-
         const playerWrap = container.querySelector('#kp-player-wrap');
         iframeContainer.style.position = 'relative';
         iframeContainer.style.paddingTop = '56.25%';
         playerWrap.appendChild(iframeContainer);
-
         const selectMenu = container.querySelector('#kp-select-menu');
         const selectLabel = container.querySelector('#kp-select-label');
         const selectEl = container.querySelector('#kp-select');
         let activeIndex = -1;
-
         menuItems.forEach((origItem, idx) => {
             const item = document.createElement('div');
             item.className = 'kp-select-item';
@@ -1631,16 +1269,13 @@
             });
             selectMenu.appendChild(item);
         });
-
         if (activeIndex === -1 && menuItems.length > 0) {
             menuItems[0].click();
             selectLabel.textContent = menuItems[0].textContent.replace(/^\d+\s*::\s*/, '').trim();
             selectMenu.querySelector('.kp-select-item').classList.add('active');
         }
-
         const selectTrigger = container.querySelector('#kp-select-trigger');
         selectTrigger.addEventListener('click', (e) => { e.stopPropagation(); selectEl.classList.toggle('open'); });
-
         document.body.innerHTML = '';
         document.body.appendChild(container);
         addStylesIfNeeded();
@@ -1649,11 +1284,7 @@
 
     function rebuildMirror() {
         const type = getMirrorTypeForRebuild();
-        if (type === 'bravo') {
-            rebuildBravo();
-            return;
-        }
-
+        if (type === 'bravo') { rebuildBravo(); return; }
         const { iframeContainer, menuItems, activeClass } = getKinoboxElements(type);
         const kpId = document.querySelector('.kinobox[data-kinopoisk]')?.getAttribute('data-kinopoisk') || '0';
         const movie = getMovieInfo();
@@ -1664,70 +1295,39 @@
         const iframe = document.querySelector('#film iframe');
         const posterImg = document.querySelector('#film img');
         const torrentBtn = document.getElementById('ltorr');
-
-        if (!iframe) {
-            showBody();
-            return;
-        }
-
+        if (!iframe) { showBody(); return; }
         const container = document.createElement('div');
         container.id = 'kp-alfa-page';
         container.innerHTML = `
             <div class="player-section">
                 <div class="player-top-bar"></div>
-                <div class="vpn-warning">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
-                    Плеер можно выбрать другой, нажмите на список
-                </div>
+                <div class="vpn-warning"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>Плеер можно выбрать другой, нажмите на список</div>
                 <div class="player-wrap" id="kp-player-wrap"></div>
-                <div class="vpn-warning">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
-                    VPN может мешать воспроизведению
-                </div>
+                <div class="vpn-warning"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>VPN может мешать воспроизведению</div>
             </div>
-            <div class="movie-info">
-                <div class="movie-info-inner">
-                    <div class="movie-poster-wrap">
-                        <img class="movie-poster-img" id="kp-movie-poster" src="" alt="">
-                    </div>
-                    <div class="movie-details" id="kp-movie-details">
-                        <h1 class="movie-title"></h1>
-                        <div class="movie-orig"></div>
-                        <div class="movie-meta"></div>
-                        <div class="movie-rows"></div>
-                        <div class="movie-desc"></div>
-                    </div>
-                </div>
-            </div>
-        `;
-
+            <div class="movie-info"><div class="movie-info-inner"><div class="movie-poster-wrap"><img class="movie-poster-img" id="kp-movie-poster" src="" alt=""></div><div class="movie-details" id="kp-movie-details"><h1 class="movie-title"></h1><div class="movie-orig"></div><div class="movie-meta"></div><div class="movie-rows"></div><div class="movie-desc"></div></div></div></div>`;
         const newPoster = container.querySelector('#kp-movie-poster');
-        if (posterImg && posterImg.src) {
-            newPoster.src = posterImg.src;
-        } else {
+        if (posterImg && posterImg.src) newPoster.src = posterImg.src;
+        else {
             const kpId = document.querySelector('script[data-kinopoisk]')?.getAttribute('data-kinopoisk') || '0';
             newPoster.src = `https://kinopoiskapiunofficial.tech/images/posters/kp_small/${kpId}.jpg`;
         }
         newPoster.onerror = () => { newPoster.style.display = 'none'; };
-
         const playerWrap = container.querySelector('#kp-player-wrap');
         playerWrap.style.paddingTop = '56.25%';
         iframe.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:none;border-radius:12px;background:#000;';
         playerWrap.appendChild(iframe);
-
         const playerTopBar = container.querySelector('.player-top-bar');
         if (torrentBtn) {
             torrentBtn.classList.add('kp-torrent-btn');
             torrentBtn.style.display = '';
             playerTopBar.appendChild(torrentBtn);
         }
-
         const movie = getMovieInfo();
         if (movie) {
             container.querySelector('.movie-title').textContent = movie.name;
             container.querySelector('.movie-orig').textContent = movie.year || '';
         }
-
         document.body.innerHTML = '';
         document.body.appendChild(container);
         addStylesIfNeeded();
@@ -1737,10 +1337,7 @@
     function waitForRebuild() {
         const type = getMirrorTypeForRebuild();
         if (type === 'bravo') {
-            if (!/\/\d+/.test(window.location.pathname)) {
-                showBody();
-                return;
-            }
+            if (!/\/\d+/.test(window.location.pathname)) { showBody(); return; }
             function isTorrentReady() {
                 const btn = document.getElementById('ltorr');
                 if (!btn) return false;
@@ -1750,51 +1347,30 @@
             let iframeReady = false;
             let torrentReady = isTorrentReady();
             const observer = new MutationObserver((mutations, obs) => {
-                if (!iframeReady && document.querySelector('#film iframe')) {
-                    iframeReady = true;
-                }
-                if (!torrentReady && isTorrentReady()) {
-                    torrentReady = true;
-                }
-                if (iframeReady && torrentReady) {
-                    obs.disconnect();
-                    rebuildBravo();
-                }
+                if (!iframeReady && document.querySelector('#film iframe')) iframeReady = true;
+                if (!torrentReady && isTorrentReady()) torrentReady = true;
+                if (iframeReady && torrentReady) { obs.disconnect(); rebuildBravo(); }
             });
             observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['href'] });
             if (document.querySelector('#film iframe')) iframeReady = true;
-            if (iframeReady && torrentReady) {
-                observer.disconnect();
-                rebuildBravo();
-                return;
-            }
+            if (iframeReady && torrentReady) { observer.disconnect(); rebuildBravo(); return; }
             setTimeout(() => {
-                if (!document.querySelector('#kp-alfa-page')) {
-                    observer.disconnect();
-                    rebuildBravo();
-                }
+                if (!document.querySelector('#kp-alfa-page')) { observer.disconnect(); rebuildBravo(); }
             }, 5000);
             return;
         }
-
         let attempts = 0;
         const maxAttempts = 60;
         const interval = setInterval(() => {
             const { iframeContainer, menuItems } = getKinoboxElements(type);
-            if (iframeContainer && menuItems.length > 0) {
-                clearInterval(interval);
-                rebuildMirror();
-            } else if (++attempts >= maxAttempts) {
-                clearInterval(interval);
-                startPersistentObserver(type);
-            }
+            if (iframeContainer && menuItems.length > 0) { clearInterval(interval); rebuildMirror(); }
+            else if (++attempts >= maxAttempts) { clearInterval(interval); startPersistentObserver(type); }
         }, 200);
     }
 
     function startPersistentObserver(type) {
         let observer;
         let fallbackTimer = null;
-
         const check = () => {
             const { iframeContainer, menuItems } = getKinoboxElements(type);
             if (iframeContainer && menuItems.length > 0) {
@@ -1803,15 +1379,9 @@
                 rebuildMirror();
             }
         };
-
         observer = new MutationObserver(check);
         observer.observe(document.documentElement, { childList: true, subtree: true });
-
-        fallbackTimer = setTimeout(() => {
-            observer.disconnect();
-            showBody();
-        }, 10000);
-
+        fallbackTimer = setTimeout(() => { observer.disconnect(); showBody(); }, 10000);
         check();
     }
 
@@ -1908,9 +1478,7 @@
                 debounceTimer = null;
                 if (document.querySelector('.kp-redirect-embed-group')) return;
                 const target = findEmbedTarget();
-                if (target && isContainerReady(target)) {
-                    buildEmbeddedUI(target);
-                }
+                if (target && isContainerReady(target)) buildEmbeddedUI(target);
             }, 100);
         });
         embedObserver.observe(document.body, { childList: true, subtree: true });
@@ -1924,15 +1492,9 @@
             currentUIUrl = window.location.href;
             removeOldUI();
             if (!isFilmOrSeriesPage()) return;
-
-            if (!isPhone && settings.embedMode) {
-                startEmbedMode();
-            } else {
-                buildFixedUI();
-            }
-        } finally {
-            isCreatingUI = false;
-        }
+            if (!isPhone && settings.embedMode) startEmbedMode();
+            else buildFixedUI();
+        } finally { isCreatingUI = false; }
     }
 
     function positionEmbedPanel(panel) {
@@ -1944,7 +1506,6 @@
         panel.style.marginLeft = '0';
         panel.style.marginRight = '0';
         panel.style.marginBottom = '0';
-
         requestAnimationFrame(() => {
             const rect = panel.getBoundingClientRect();
             if (rect.right > window.innerWidth - 8) {
@@ -1963,10 +1524,8 @@
         panel.style.left = 'auto';
         panel.style.right = 'auto';
         panel.style.margin = '0';
-
         const horiz = settings.btnPosition;
         let openLeft = (horiz === 'right');
-
         if (openLeft) {
             panel.style.right = '100%';
             panel.style.marginRight = CONFIG.BUTTONS_GAP;
@@ -1974,12 +1533,10 @@
             panel.style.left = '100%';
             panel.style.marginLeft = CONFIG.BUTTONS_GAP;
         }
-
         requestAnimationFrame(() => {
             const rect = panel.getBoundingClientRect();
             const vw = window.innerWidth;
             const vh = window.innerHeight;
-
             if (rect.right > vw - 8 && !openLeft) {
                 panel.style.left = 'auto';
                 panel.style.right = '100%';
@@ -1996,11 +1553,8 @@
                 panel.style.top = 'auto';
                 panel.style.bottom = '0';
             }
-
             const rect2 = panel.getBoundingClientRect();
-            if (rect2.right > vw - 8) {
-                panel.style.maxWidth = 'calc(100vw - 24px)';
-            }
+            if (rect2.right > vw - 8) panel.style.maxWidth = 'calc(100vw - 24px)';
         });
     }
 
@@ -2012,41 +1566,33 @@
 
     function attachHoverBehaviour(group, buttons) {
         group.addEventListener('mouseenter', () => {
-            buttons.forEach(b => {
-                b.style.opacity = '1';
-                b.style.pointerEvents = 'auto';
-                b.style.transform = 'scale(1)';
-            });
+            buttons.forEach(b => { b.style.opacity = '1'; b.style.pointerEvents = 'auto'; b.style.transform = 'scale(1)'; });
         });
         group.addEventListener('mouseleave', () => {
-            buttons.forEach(b => {
-                b.style.opacity = '0';
-                b.style.pointerEvents = 'none';
-                b.style.transform = 'scale(0.5)';
-            });
+            buttons.forEach(b => { b.style.opacity = '0'; b.style.pointerEvents = 'none'; b.style.transform = 'scale(0.5)'; });
         });
     }
 
     function attachPanelHandlers(settingsBtn, settingsPanel, saveBtn, savedPanel, positionFn) {
         settingsBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            if (settingsPanel.style.display === 'flex') {
-                settingsPanel.style.display = 'none';
-            } else {
+            if (settingsPanel.style.display === 'flex') settingsPanel.style.display = 'none';
+            else {
                 if (savedPanel.style.display === 'flex') savedPanel.style.display = 'none';
                 settingsPanel.style.display = 'flex';
                 showSettingsView();
                 positionFn(settingsPanel);
             }
         });
-
         saveBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             if (savedPanel.style.display === 'flex') {
                 savedPanel.style.display = 'none';
+                // Сброс share-view при закрытии панели по кнопке
+                if (savedPanel._resetShareView) savedPanel._resetShareView();
             } else {
                 if (settingsPanel.style.display === 'flex') settingsPanel.style.display = 'none';
-                renderSavedMovies(savedPanel);
+                renderSavedMovies();
                 savedPanel.style.display = 'flex';
                 positionFn(savedPanel);
             }
@@ -2055,27 +1601,18 @@
 
     function buildEmbeddedUI(target) {
         target.querySelectorAll('.kp-redirect-embed-group').forEach(el => el.remove());
-
         const group = document.createElement('div');
         group.className = 'kp-redirect-embed-group';
         group.style.cssText = `display: inline-flex; align-items: center; gap: ${CONFIG.BUTTONS_GAP}; user-select: none;`;
-
         const colors = getThemeColors();
-        const mainBtn = createButton(
-            svgIcon('play', iconSizeFor(CONFIG.BTN_SIZE)),
-            null, CONFIG.BTN_SIZE,
-            colors.EMBED_MAIN_COLOR, colors.EMBED_IDLE_BG, colors.HOVER_BG, colors.HOVER_TEXT_COLOR
-        );
+        const mainBtn = createButton(svgIcon('play', iconSizeFor(CONFIG.BTN_SIZE)), null, CONFIG.BTN_SIZE,
+            colors.EMBED_MAIN_COLOR, colors.EMBED_IDLE_BG, colors.HOVER_BG, colors.HOVER_TEXT_COLOR);
         mainBtn.title = `${getChannelName(settings.targetDomain)} канал`;
         mainBtn.addEventListener('click', redirectToChannel);
-
         const settingsWrapper = document.createElement('div');
         settingsWrapper.style.cssText = 'position: relative; display: inline-flex; align-items: center;';
-        const settingsBtn = createButton(
-            svgIcon('settings', iconSizeFor(CONFIG.SETTINGS_BTN_SIZE)),
-            'kp-settings-btn', CONFIG.SETTINGS_BTN_SIZE,
-            colors.EMBED_SETTINGS_COLOR, colors.EMBED_IDLE_BG, colors.HOVER_BG, colors.HOVER_TEXT_COLOR
-        );
+        const settingsBtn = createButton(svgIcon('settings', iconSizeFor(CONFIG.SETTINGS_BTN_SIZE)), 'kp-settings-btn', CONFIG.SETTINGS_BTN_SIZE,
+            colors.EMBED_SETTINGS_COLOR, colors.EMBED_IDLE_BG, colors.HOVER_BG, colors.HOVER_TEXT_COLOR);
         settingsBtn.title = 'Настройки';
         const settingsPanel = createSettingsPanel();
         settingsPanel.style.position = 'absolute';
@@ -2084,14 +1621,10 @@
         settingsPanel.style.marginTop = CONFIG.BUTTONS_GAP;
         settingsWrapper.appendChild(settingsBtn);
         settingsWrapper.appendChild(settingsPanel);
-
         const savedWrapper = document.createElement('div');
         savedWrapper.style.cssText = 'position: relative; display: inline-flex; align-items: center;';
-        const saveBtn = createButton(
-            svgIcon('bookmark', iconSizeFor(CONFIG.SETTINGS_BTN_SIZE)),
-            'kp-save-btn', CONFIG.SETTINGS_BTN_SIZE,
-            colors.EMBED_SETTINGS_COLOR, colors.EMBED_IDLE_BG, colors.HOVER_BG, colors.HOVER_TEXT_COLOR
-        );
+        const saveBtn = createButton(svgIcon('bookmark', iconSizeFor(CONFIG.SETTINGS_BTN_SIZE)), 'kp-save-btn', CONFIG.SETTINGS_BTN_SIZE,
+            colors.EMBED_SETTINGS_COLOR, colors.EMBED_IDLE_BG, colors.HOVER_BG, colors.HOVER_TEXT_COLOR);
         saveBtn.title = 'Закладки';
         const savedPanel = createSavedPanel();
         savedPanel.style.position = 'absolute';
@@ -2100,33 +1633,21 @@
         savedPanel.style.marginTop = CONFIG.BUTTONS_GAP;
         savedWrapper.appendChild(saveBtn);
         savedWrapper.appendChild(savedPanel);
-
         if (isTouchDevice) {
-            settingsBtn.style.opacity = '1';
-            settingsBtn.style.pointerEvents = 'auto';
-            settingsBtn.style.transform = 'scale(1)';
-            saveBtn.style.opacity = '1';
-            saveBtn.style.pointerEvents = 'auto';
-            saveBtn.style.transform = 'scale(1)';
+            settingsBtn.style.opacity = '1'; settingsBtn.style.pointerEvents = 'auto'; settingsBtn.style.transform = 'scale(1)';
+            saveBtn.style.opacity = '1'; saveBtn.style.pointerEvents = 'auto'; saveBtn.style.transform = 'scale(1)';
         } else {
-            settingsBtn.style.opacity = '0';
-            settingsBtn.style.pointerEvents = 'none';
-            settingsBtn.style.transform = 'scale(0.5)';
+            settingsBtn.style.opacity = '0'; settingsBtn.style.pointerEvents = 'none'; settingsBtn.style.transform = 'scale(0.5)';
             settingsBtn.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
-            saveBtn.style.opacity = '0';
-            saveBtn.style.pointerEvents = 'none';
-            saveBtn.style.transform = 'scale(0.5)';
+            saveBtn.style.opacity = '0'; saveBtn.style.pointerEvents = 'none'; saveBtn.style.transform = 'scale(0.5)';
             saveBtn.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
             attachHoverBehaviour(group, [settingsBtn, saveBtn]);
         }
-
         attachPanelHandlers(settingsBtn, settingsPanel, saveBtn, savedPanel, positionEmbedPanel);
-
         group.appendChild(mainBtn);
         group.appendChild(settingsWrapper);
         group.appendChild(savedWrapper);
         target.appendChild(group);
-
         applyUpdateIndicator(_updateState === 'new');
     }
 
@@ -2135,103 +1656,67 @@
         container.id = 'kp-btn-container';
         container.style.cssText = `position: fixed; z-index: 999999; display: flex; flex-direction: column; align-items: center; gap: 6px; user-select: none;`;
         applyFixedPosition(container);
-
         const isTop = settings.btnVertical === 'top';
         const colors = getThemeColors();
         let mainIdleBg, mainColor, mainHoverBg, mainHoverColor;
         if (isTop) {
-            mainIdleBg = colors.FIXED_TOP_IDLE_BG;
-            mainColor = colors.FIXED_TOP_COLOR;
-            mainHoverBg = colors.FIXED_TOP_HOVER_BG;
-            mainHoverColor = colors.FIXED_TOP_HOVER_COLOR;
+            mainIdleBg = colors.FIXED_TOP_IDLE_BG; mainColor = colors.FIXED_TOP_COLOR;
+            mainHoverBg = colors.FIXED_TOP_HOVER_BG; mainHoverColor = colors.FIXED_TOP_HOVER_COLOR;
         } else {
-            mainIdleBg = colors.FIXED_MID_BOTTOM_IDLE_BG;
-            mainColor = colors.FIXED_MID_BOTTOM_COLOR;
-            mainHoverBg = colors.HOVER_BG;
-            mainHoverColor = colors.HOVER_TEXT_COLOR;
+            mainIdleBg = colors.FIXED_MID_BOTTOM_IDLE_BG; mainColor = colors.FIXED_MID_BOTTOM_COLOR;
+            mainHoverBg = colors.HOVER_BG; mainHoverColor = colors.HOVER_TEXT_COLOR;
         }
-
         const mainSize = isPhone ? CONFIG.PHONE_BTN_SIZE : CONFIG.BTN_SIZE;
         const settingsSize = isPhone ? CONFIG.PHONE_SETTINGS_BTN_SIZE : CONFIG.SETTINGS_BTN_SIZE;
-
-        const mainBtn = createButton(
-            svgIcon('play', iconSizeFor(mainSize)),
-            'kp-redirect-btn', mainSize,
-            mainColor, mainIdleBg, mainHoverBg, mainHoverColor
-        );
+        const mainBtn = createButton(svgIcon('play', iconSizeFor(mainSize)), 'kp-redirect-btn', mainSize,
+            mainColor, mainIdleBg, mainHoverBg, mainHoverColor);
         mainBtn.title = `${getChannelName(settings.targetDomain)} канал`;
         mainBtn.addEventListener('click', redirectToChannel);
-
         const secondaryIdleBg = colors.EMBED_IDLE_BG;
         const secondaryColor = colors.EMBED_SETTINGS_COLOR;
         const secondaryHoverBg = colors.HOVER_BG;
         const secondaryHoverColor = colors.HOVER_TEXT_COLOR;
-
         const settingsWrapper = document.createElement('div');
         settingsWrapper.style.cssText = 'position: relative; display: inline-flex; align-items: center;';
-        const settingsBtn = createButton(
-            svgIcon('settings', iconSizeFor(settingsSize)),
-            'kp-settings-btn', settingsSize,
-            secondaryColor, secondaryIdleBg, secondaryHoverBg, secondaryHoverColor
-        );
+        const settingsBtn = createButton(svgIcon('settings', iconSizeFor(settingsSize)), 'kp-settings-btn', settingsSize,
+            secondaryColor, secondaryIdleBg, secondaryHoverBg, secondaryHoverColor);
         settingsBtn.title = 'Настройки';
         const settingsPanel = createSettingsPanel();
         settingsPanel.style.position = 'absolute';
         settingsPanel.style.top = '0';
-
         const savedWrapper = document.createElement('div');
         savedWrapper.style.cssText = 'position: relative; display: inline-flex; align-items: center;';
-        const saveBtn = createButton(
-            svgIcon('bookmark', iconSizeFor(settingsSize)),
-            'kp-save-btn', settingsSize,
-            secondaryColor, secondaryIdleBg, secondaryHoverBg, secondaryHoverColor
-        );
+        const saveBtn = createButton(svgIcon('bookmark', iconSizeFor(settingsSize)), 'kp-save-btn', settingsSize,
+            secondaryColor, secondaryIdleBg, secondaryHoverBg, secondaryHoverColor);
         saveBtn.title = 'Закладки';
         const savedPanel = createSavedPanel();
         savedPanel.style.position = 'absolute';
         savedPanel.style.top = '0';
-
         if (isTouchDevice) {
-            settingsBtn.style.opacity = '1';
-            settingsBtn.style.pointerEvents = 'auto';
-            settingsBtn.style.transform = 'scale(1)';
-            saveBtn.style.opacity = '1';
-            saveBtn.style.pointerEvents = 'auto';
-            saveBtn.style.transform = 'scale(1)';
+            settingsBtn.style.opacity = '1'; settingsBtn.style.pointerEvents = 'auto'; settingsBtn.style.transform = 'scale(1)';
+            saveBtn.style.opacity = '1'; saveBtn.style.pointerEvents = 'auto'; saveBtn.style.transform = 'scale(1)';
         } else {
-            settingsBtn.style.opacity = '0';
-            settingsBtn.style.pointerEvents = 'none';
-            settingsBtn.style.transform = 'scale(0.5)';
+            settingsBtn.style.opacity = '0'; settingsBtn.style.pointerEvents = 'none'; settingsBtn.style.transform = 'scale(0.5)';
             settingsBtn.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
-            saveBtn.style.opacity = '0';
-            saveBtn.style.pointerEvents = 'none';
-            saveBtn.style.transform = 'scale(0.5)';
+            saveBtn.style.opacity = '0'; saveBtn.style.pointerEvents = 'none'; saveBtn.style.transform = 'scale(0.5)';
             saveBtn.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
             attachHoverBehaviour(container, [settingsBtn, saveBtn]);
         }
-
         settingsWrapper.appendChild(settingsBtn);
         settingsWrapper.appendChild(settingsPanel);
         savedWrapper.appendChild(saveBtn);
         savedWrapper.appendChild(savedPanel);
-
         attachPanelHandlers(settingsBtn, settingsPanel, saveBtn, savedPanel, positionFixedPanel);
-
         container.appendChild(mainBtn);
         container.appendChild(settingsWrapper);
         container.appendChild(savedWrapper);
         document.body.appendChild(container);
-
         applyUpdateIndicator(_updateState === 'new');
     }
 
     function applyFixedPosition(container) {
         let posKey = `${settings.btnPosition}-${settings.btnVertical}`;
-
-        if (isPhone && settings.btnVertical === 'top') {
-            posKey = `${settings.btnPosition}-middle`;
-        }
-
+        if (isPhone && settings.btnVertical === 'top') posKey = `${settings.btnPosition}-middle`;
         const pos = CONFIG.POSITIONS[posKey] || CONFIG.POSITIONS['left-middle'];
         container.style.left = pos.left ? '12px' : 'auto';
         container.style.right = pos.left ? 'auto' : '12px';
@@ -2247,14 +1732,9 @@
     function createButton(content, id, size, color, idleBg, hoverBg, hoverTextColor) {
         const btn = document.createElement('div');
         if (id) btn.id = id;
-
         const isSvg = typeof content === 'string' && content.trim().startsWith('<svg');
-        if (isSvg) {
-            btn.innerHTML = content;
-        } else {
-            btn.textContent = content;
-        }
-
+        if (isSvg) btn.innerHTML = content;
+        else btn.textContent = content;
         btn._baseColor = color;
         btn._idleBg = idleBg;
         btn._hoverBg = hoverBg;
@@ -2305,13 +1785,9 @@
     function showUpdateView() {
         const panel = document.getElementById('kp-settings-panel');
         if (!panel) return;
-
-        if ((_updateState === 'ok' || _updateState === 'error') &&
-            _lastCheckTs && (Date.now() - _lastCheckTs) > CONFIG.STALE_UI_THRESHOLD) {
-            _updateState = 'idle';
-            _updateResult = null;
+        if ((_updateState === 'ok' || _updateState === 'error') && _lastCheckTs && (Date.now() - _lastCheckTs) > CONFIG.STALE_UI_THRESHOLD) {
+            _updateState = 'idle'; _updateResult = null;
         }
-
         const s = panel.querySelector('#kp-settings-view');
         const u = panel.querySelector('#kp-update-view');
         if (s) s.style.display = 'none';
@@ -2330,15 +1806,12 @@
         const commitText = panel.querySelector('#kp-commit-text');
         const actions = panel.querySelector('#kp-update-actions');
         if (!icon || !title || !versions || !actions) return;
-
         icon.className = 'kp-update-icon';
         icon.innerHTML = svgIcon('refresh', 22);
         title.className = 'kp-update-title';
         if (commitCard) commitCard.classList.remove('visible');
-
         const currentVerLine = `<span class="line"><span class="val ${state === 'ok' ? 'ok' : ''}">${escapeHtml(LOCAL_META.version)}</span></span>`;
         const currentDateLine = `<span class="line"><span class="val">${escapeHtml(LOCAL_META.date)}</span></span>`;
-
         if (state === 'loading') {
             void icon.offsetWidth;
             icon.classList.add('spin');
@@ -2347,56 +1820,36 @@
             actions.innerHTML = `<button class="kp-btn-primary" disabled>Проверка…</button>`;
             return;
         }
-
         if (state === 'idle') {
             title.textContent = 'Проверить обновление?';
             versions.innerHTML = currentVerLine + currentDateLine;
             actions.innerHTML = `<button id="kp-update-check-btn" class="kp-btn-primary">Проверить обновление</button>`;
             return;
         }
-
         if (state === 'ok') {
-            icon.classList.add('ok');
-            icon.innerHTML = svgIcon('check', 22);
-            title.classList.add('ok');
-            title.textContent = 'Всё актуально';
+            icon.classList.add('ok'); icon.innerHTML = svgIcon('check', 22);
+            title.classList.add('ok'); title.textContent = 'Всё актуально';
             versions.innerHTML = currentVerLine + currentDateLine;
             actions.innerHTML = `<button id="kp-update-check-btn" class="kp-btn-primary">Проверить ещё раз</button>`;
             return;
         }
-
         if (state === 'new') {
             const r = _updateResult || {};
-            icon.classList.add('new');
-            icon.innerHTML = svgIcon('arrowUp', 22);
-            title.classList.add('new');
-            title.textContent = 'Доступна новая версия';
-
+            icon.classList.add('new'); icon.innerHTML = svgIcon('arrowUp', 22);
+            title.classList.add('new'); title.textContent = 'Доступна новая версия';
             versions.innerHTML = `
                 <span class="line"><span class="old">${escapeHtml(LOCAL_META.version)}</span><span class="arrow">→</span><span class="new">${escapeHtml(r.remoteVersion || '?')}</span></span>
-                <span class="line"><span class="old">${escapeHtml(LOCAL_META.date)}</span><span class="arrow">→</span><span class="new">${escapeHtml(r.remoteDate || '—')}</span></span>
-            `;
-
+                <span class="line"><span class="old">${escapeHtml(LOCAL_META.date)}</span><span class="arrow">→</span><span class="new">${escapeHtml(r.remoteDate || '—')}</span></span>`;
             if (commitCard && commitText) {
-                if (r.changelog) {
-                    commitText.textContent = r.changelog;
-                } else {
-                    commitText.textContent = 'Описание недоступно';
-                }
+                commitText.textContent = r.changelog || 'Описание недоступно';
                 commitCard.classList.add('visible');
             }
-
-            actions.innerHTML = `
-                <button id="kp-update-install-btn" class="kp-btn-primary warn">Обновить сейчас</button>
-            `;
+            actions.innerHTML = `<button id="kp-update-install-btn" class="kp-btn-primary warn">Обновить сейчас</button>`;
             return;
         }
-
         if (state === 'error') {
-            icon.classList.add('err');
-            icon.innerHTML = svgIcon('alert', 22);
-            title.classList.add('err');
-            title.textContent = 'Не удалось проверить';
+            icon.classList.add('err'); icon.innerHTML = svgIcon('alert', 22);
+            title.classList.add('err'); title.textContent = 'Не удалось проверить';
             versions.innerHTML = currentVerLine + currentDateLine;
             actions.innerHTML = `<button id="kp-update-check-btn" class="kp-btn-primary">Повторить</button>`;
             return;
@@ -2406,48 +1859,31 @@
     async function performCheck({ silent }) {
         if (_checkInFlight) return;
         _checkInFlight = true;
-
-        if (!silent) {
-            _updateState = 'loading';
-            renderUpdateView('loading');
-        }
-
+        if (!silent) { _updateState = 'loading'; renderUpdateView('loading'); }
         try {
             const info = await fetchUpdateInfo();
-            _updateResult = info;
-            _lastCheckTs = Date.now();
-            _consecutiveErrors = 0;
-
+            _updateResult = info; _lastCheckTs = Date.now(); _consecutiveErrors = 0;
             const cmp = compareVersions(LOCAL_META.version, info.remoteVersion);
             _updateState = cmp < 0 ? 'new' : 'ok';
-
             saveUpdateCache(_updateResult, _updateState);
             applyUpdateIndicator(_updateState === 'new');
-
-            if (!silent) {
-                renderUpdateView(_updateState);
-            } else {
+            if (!silent) renderUpdateView(_updateState);
+            else {
                 const panel = document.getElementById('kp-settings-panel');
                 if (panel && panel.style.display === 'flex') {
                     const updateView = panel.querySelector('#kp-update-view');
-                    if (updateView && updateView.style.display !== 'none') {
-                        renderUpdateView(_updateState);
-                    }
+                    if (updateView && updateView.style.display !== 'none') renderUpdateView(_updateState);
                 }
             }
         } catch (err) {
             console.error('Update check failed:', err);
             _consecutiveErrors++;
             if (!silent) {
-                _updateResult = null;
-                _lastCheckTs = Date.now();
-                _updateState = 'error';
+                _updateResult = null; _lastCheckTs = Date.now(); _updateState = 'error';
                 renderUpdateView('error');
                 saveUpdateCache(null, 'error');
             }
-        } finally {
-            _checkInFlight = false;
-        }
+        } finally { _checkInFlight = false; }
     }
 
     function checkForUpdates() { return performCheck({ silent: false }); }
@@ -2464,37 +1900,29 @@
     function scheduleNextCheck() {
         if (_checkTimer) clearTimeout(_checkTimer);
         const delay = getNextCheckDelay();
-        _checkTimer = setTimeout(() => {
-            _checkTimer = null;
-            runScheduledCheck();
-        }, delay);
+        _checkTimer = setTimeout(() => { _checkTimer = null; runScheduledCheck(); }, delay);
     }
 
     function runScheduledCheck() {
-        if (document.visibilityState === 'hidden') {
-            return;
-        }
-        if (typeof navigator.onLine === 'boolean' && !navigator.onLine) {
-            scheduleNextCheck();
-            return;
-        }
+        if (document.visibilityState === 'hidden') return;
+        if (typeof navigator.onLine === 'boolean' && !navigator.onLine) { scheduleNextCheck(); return; }
         silentCheckForUpdates().finally(() => scheduleNextCheck());
     }
 
+    // ============================================================
+    // Слушатели обновлений. Определение темы — как в 7.5.4:
+    // через DOM-кнопки Kinopoisk, без слушателя кликов.
+    // ============================================================
     function setupUpdateListeners() {
         if (!_visibilityListenerAttached) {
             document.addEventListener('visibilitychange', () => {
-                if (document.visibilityState === 'visible' && !_checkTimer && !_checkInFlight) {
-                    scheduleNextCheck();
-                }
+                if (document.visibilityState === 'visible' && !_checkTimer && !_checkInFlight) scheduleNextCheck();
             });
             _visibilityListenerAttached = true;
         }
         if (!_onlineListenerAttached) {
             window.addEventListener('online', () => {
-                if (!_checkTimer && !_checkInFlight && _consecutiveErrors > 0) {
-                    scheduleNextCheck();
-                }
+                if (!_checkTimer && !_checkInFlight && _consecutiveErrors > 0) scheduleNextCheck();
             });
             _onlineListenerAttached = true;
         }
@@ -2502,7 +1930,6 @@
 
     function bootstrapUpdateCheck() {
         setupUpdateListeners();
-
         const cached = loadUpdateCache();
         if (cached) {
             _updateState = cached.state;
@@ -2512,75 +1939,51 @@
             scheduleNextCheck();
         } else {
             const delay = CONFIG.AUTO_CHECK_INITIAL_DELAY_MS + Math.floor(Math.random() * CONFIG.AUTO_CHECK_INITIAL_JITTER_MS);
-            _checkTimer = setTimeout(() => {
-                _checkTimer = null;
-                runScheduledCheck();
-            }, delay);
+            _checkTimer = setTimeout(() => { _checkTimer = null; runScheduledCheck(); }, delay);
         }
     }
 
     function createSettingsPanel() {
         const panel = document.createElement('div');
         panel.id = 'kp-settings-panel';
-
-        if (!document.getElementById('kp-settings-panel-style')) {
-            injectStyleWhenHeadReady('kp-settings-panel-style', SETTINGS_PANEL_STYLES);
-        }
-
+        if (!document.getElementById('kp-settings-panel-style')) injectStyleWhenHeadReady('kp-settings-panel-style', SETTINGS_PANEL_STYLES);
         const bgColor = getPanelBackground();
         const textColor = getPanelTextColor();
         const baseMinWidth = isPhone ? CONFIG.PHONE_PANEL_WIDTH : CONFIG.PANEL_MIN_WIDTH;
         Object.assign(panel.style, {
-            zIndex: '1000001',
-            background: bgColor,
-            borderRadius: CONFIG.PANEL_RADIUS,
-            color: textColor,
-            fontFamily: 'Segoe UI, Arial, sans-serif',
-            fontSize: getPanelFontSize(),
-            minWidth: baseMinWidth,
-            maxWidth: 'calc(100vw - 24px)',
+            zIndex: '1000001', background: bgColor, borderRadius: CONFIG.PANEL_RADIUS,
+            color: textColor, fontFamily: 'Segoe UI, Arial, sans-serif', fontSize: getPanelFontSize(),
+            minWidth: baseMinWidth, maxWidth: 'calc(100vw - 24px)',
             boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
-            display: 'none',
-            flexDirection: 'column',
-            gap: CONFIG.PANEL_GAP,
-            padding: CONFIG.PANEL_PADDING,
-            boxSizing: 'border-box'
+            display: 'none', flexDirection: 'column', gap: CONFIG.PANEL_GAP,
+            padding: CONFIG.PANEL_PADDING, boxSizing: 'border-box'
         });
 
-        // Каналы
         const channelItemsHTML = CONFIG.CHANNELS.map(ch => {
             const isActive = ch.domain === settings.targetDomain;
             return `<div class="kp-dd-channel-item ${isActive ? 'active' : ''}" data-value="${ch.domain}">${escapeHtml(ch.name)}</div>`;
         }).join('');
         const currentChannelName = getChannelName(settings.targetDomain);
 
-        // Позиции
         const positionsKeys = isPhone ? CONFIG.PHONE_POSITIONS : CONFIG.DESKTOP_POSITIONS;
         let currentPosKey = `${settings.btnPosition}-${settings.btnVertical}`;
         if (!CONFIG.POSITIONS[currentPosKey]) currentPosKey = 'left-middle';
-        if (isPhone && !CONFIG.PHONE_POSITIONS.includes(currentPosKey)) {
-            currentPosKey = 'left-middle';
-        }
+        if (isPhone && !CONFIG.PHONE_POSITIONS.includes(currentPosKey)) currentPosKey = 'left-middle';
 
         const positionItemsHTML = positionsKeys.map(key => {
             const isActive = key === currentPosKey;
             return `<div class="kp-dd-pos-item ${isActive ? 'active' : ''}" data-pos="${key}" title="${key}">${svgIcon(posToIconName(key), 18)}</div>`;
         }).join('');
-
         const posMenuCols = isPhone ? 'repeat(2, 1fr)' : 'repeat(3, 1fr)';
-
         const elementBorderRadius = CONFIG.PANEL_RADIUS;
 
         const embedToggleHTML = isPhone ? '' : `
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <span>Встроить</span>
                 <button id="kp-embed-toggle" class="kp-embed-toggle" type="button" data-state="${settings.embedMode ? 'on' : 'off'}" aria-label="Переключить встраивание">
-                    <span class="kp-embed-toggle-track">
-                        <span class="kp-embed-toggle-thumb"></span>
-                    </span>
+                    <span class="kp-embed-toggle-track"><span class="kp-embed-toggle-thumb"></span></span>
                 </button>
-            </div>
-        `;
+            </div>`;
 
         const positionBlockDisplay = (isPhone || !settings.embedMode) ? 'flex' : 'none';
         const commitCardHeight = isPhone ? CONFIG.COMMIT_CARD_HEIGHT_PHONE : CONFIG.COMMIT_CARD_HEIGHT_DESKTOP;
@@ -2593,31 +1996,21 @@
                     <span class="kp-theme-toggle-icon kp-theme-icon-moon">${svgIcon('moon', 12)}</span>
                     <span class="kp-theme-toggle-thumb"></span>
                 </span>
-            </button>
-        ` : '';
+            </button>` : '';
 
         panel.innerHTML = `
             <div id="kp-settings-view" style="display:flex; flex-direction:column; gap:${CONFIG.PANEL_GAP};">
                 <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(127,127,127,0.18); padding-bottom: 4px; gap: 8px;">
                     <button id="kp-update-open-btn" class="kp-icon-btn" title="Обновление" style="color:${textColor};">${svgIcon('refresh', updateIconSizeNum)}</button>
                     ${themeToggleHTML}
-                    <a id="kp-github-link" href="${CONFIG.GITHUB_URL}" target="_blank" rel="noopener" style="
-                        color: ${textColor}; text-decoration: none;
-                        font-size: ${isPhone ? '13px' : '12px'};
-                        opacity: 0.65; transition: opacity 0.15s;
-                        touch-action: manipulation; -webkit-tap-highlight-color: transparent;">GitHub</a>
+                    <a id="kp-github-link" href="${CONFIG.GITHUB_URL}" target="_blank" rel="noopener" style="color:${textColor}; text-decoration:none; font-size:${isPhone ? '13px' : '12px'}; opacity:0.65; transition:opacity 0.15s; touch-action:manipulation; -webkit-tap-highlight-color:transparent;">GitHub</a>
                 </div>
                 <div style="display: flex; flex-direction: column; gap: ${CONFIG.PANEL_GAP};">
                     <div style="display: flex; justify-content: space-between; align-items: center;">
                         <span>Канал</span>
                         <div class="kp-dd-channel" id="kp-channel-dd" data-value="${settings.targetDomain}">
-                            <div class="kp-dd-channel-trigger">
-                                <span id="kp-channel-dd-label">${escapeHtml(currentChannelName)}</span>
-                                <span class="kp-dd-channel-chev">${svgIcon('chevronDown', 12)}</span>
-                            </div>
-                            <div class="kp-dd-channel-menu" id="kp-channel-dd-menu" style="background:${bgColor};">
-                                ${channelItemsHTML}
-                            </div>
+                            <div class="kp-dd-channel-trigger"><span id="kp-channel-dd-label">${escapeHtml(currentChannelName)}</span><span class="kp-dd-channel-chev">${svgIcon('chevronDown', 12)}</span></div>
+                            <div class="kp-dd-channel-menu" id="kp-channel-dd-menu" style="background:${bgColor};">${channelItemsHTML}</div>
                         </div>
                     </div>
                     ${embedToggleHTML}
@@ -2625,34 +2018,19 @@
                         <div style="display: flex; justify-content: space-between; align-items: center;">
                             <span>Позиция</span>
                             <div class="kp-dd-pos" id="kp-pos-dd" data-value="${currentPosKey}">
-                                <div class="kp-dd-pos-trigger">
-                                    <span class="kp-dd-pos-icon" id="kp-pos-dd-icon">${svgIcon(posToIconName(currentPosKey), 18)}</span>
-                                    <span class="kp-dd-pos-chev">${svgIcon('chevronDown', 12)}</span>
-                                </div>
-                                <div class="kp-dd-pos-menu" id="kp-pos-dd-menu" style="background:${bgColor}; grid-template-columns: ${posMenuCols};">
-                                    ${positionItemsHTML}
-                                </div>
+                                <div class="kp-dd-pos-trigger"><span class="kp-dd-pos-icon" id="kp-pos-dd-icon">${svgIcon(posToIconName(currentPosKey), 18)}</span><span class="kp-dd-pos-chev">${svgIcon('chevronDown', 12)}</span></div>
+                                <div class="kp-dd-pos-menu" id="kp-pos-dd-menu" style="background:${bgColor}; grid-template-columns: ${posMenuCols};">${positionItemsHTML}</div>
                             </div>
                         </div>
                     </div>
                 </div>
-                <button id="kp-save-settings" style="
-                    background:#427552; border:none; color:#fff; padding:${isPhone ? '10px 0' : '6px 0'};
-                    border-radius:${elementBorderRadius}; font-weight:600; cursor:pointer; transition:0.2s;
-                    font-size:${getPanelFontSize()}; margin-top:2px;">
-                    Сохранить
-                </button>
+                <button id="kp-save-settings" style="background:#427552; border:none; color:#fff; padding:${isPhone ? '10px 0' : '6px 0'}; border-radius:${elementBorderRadius}; font-weight:600; cursor:pointer; transition:0.2s; font-size:${getPanelFontSize()}; margin-top:2px;">Сохранить</button>
             </div>
-
             <div id="kp-update-view" style="display:none; flex-direction:column; gap:${CONFIG.PANEL_GAP};">
                 <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(127,127,127,0.18); padding-bottom: 4px; gap: 8px;">
                     <button id="kp-update-back-btn" class="kp-icon-btn" title="Назад" style="color:${textColor};">${svgIcon('arrowLeft', 17)}</button>
                     <span style="font-weight: 600; font-size: 13px; opacity: 0.65; text-align:center; flex:1;">Обновление</span>
-                    <a href="${CONFIG.GITHUB_URL}" target="_blank" rel="noopener" style="
-                        color: ${textColor}; text-decoration: none;
-                        font-size: ${isPhone ? '13px' : '12px'};
-                        opacity: 0.65; transition: opacity 0.15s;
-                        touch-action: manipulation; -webkit-tap-highlight-color: transparent;">GitHub</a>
+                    <a href="${CONFIG.GITHUB_URL}" target="_blank" rel="noopener" style="color:${textColor}; text-decoration:none; font-size:${isPhone ? '13px' : '12px'}; opacity:0.65;">GitHub</a>
                 </div>
                 <div style="display:flex; flex-direction:column; gap:6px; padding:4px 2px 4px;">
                     <div class="kp-update-icon" id="kp-update-icon">${svgIcon('refresh', 22)}</div>
@@ -2660,26 +2038,20 @@
                     <div class="kp-update-versions" id="kp-update-versions"></div>
                     <div class="kp-commit-card" id="kp-update-commit" style="height:${commitCardHeight};">
                         <div class="kp-commit-header">Кинопоиск [Free]</div>
-                        <div class="kp-commit-scroll">
-                            <div class="kp-commit-text" id="kp-commit-text"></div>
-                        </div>
+                        <div class="kp-commit-scroll"><div class="kp-commit-text" id="kp-commit-text"></div></div>
                     </div>
                     <div class="kp-update-actions" id="kp-update-actions"></div>
                 </div>
-            </div>
-        `;
+            </div>`;
 
         const embedToggle = panel.querySelector('#kp-embed-toggle');
         const positionBlock = panel.querySelector('#kp-position-block');
-
         if (embedToggle) {
             embedToggle.addEventListener('click', (e) => {
                 e.stopPropagation();
                 const next = embedToggle.dataset.state === 'on' ? 'off' : 'on';
                 embedToggle.dataset.state = next;
-                if (positionBlock) {
-                    positionBlock.style.display = next === 'on' ? 'none' : 'flex';
-                }
+                if (positionBlock) positionBlock.style.display = next === 'on' ? 'none' : 'flex';
             });
         }
 
@@ -2689,32 +2061,22 @@
             githubLink.addEventListener('mouseleave', () => githubLink.style.opacity = '0.65');
         }
 
-        panel.querySelector('#kp-update-open-btn')?.addEventListener('click', (e) => {
-            e.stopPropagation();
-            showUpdateView();
-        });
-        panel.querySelector('#kp-update-back-btn')?.addEventListener('click', (e) => {
-            e.stopPropagation();
-            showSettingsView();
-        });
+        panel.querySelector('#kp-update-open-btn')?.addEventListener('click', (e) => { e.stopPropagation(); showUpdateView(); });
+        panel.querySelector('#kp-update-back-btn')?.addEventListener('click', (e) => { e.stopPropagation(); showSettingsView(); });
 
-        // === Кастомный дропдаун каналов ===
         const channelDd = panel.querySelector('#kp-channel-dd');
         if (channelDd) {
             const channelLabel = channelDd.querySelector('#kp-channel-dd-label');
             const channelMenu = channelDd.querySelector('#kp-channel-dd-menu');
-
             channelDd.addEventListener('click', (e) => {
                 e.stopPropagation();
                 if (e.target.closest('.kp-dd-channel-item')) return;
                 channelDd.classList.toggle('open');
             });
-
             channelMenu.querySelectorAll('.kp-dd-channel-item').forEach(item => {
                 item.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    const val = item.dataset.value;
-                    channelDd.dataset.value = val;
+                    channelDd.dataset.value = item.dataset.value;
                     channelLabel.textContent = item.textContent;
                     channelMenu.querySelectorAll('.kp-dd-channel-item').forEach(x => x.classList.remove('active'));
                     item.classList.add('active');
@@ -2723,18 +2085,15 @@
             });
         }
 
-        // === Кастомный дропдаун позиции ===
         const posDd = panel.querySelector('#kp-pos-dd');
         if (posDd) {
             const posDdIcon = posDd.querySelector('#kp-pos-dd-icon');
             const posDdMenu = posDd.querySelector('#kp-pos-dd-menu');
-
             posDd.addEventListener('click', (e) => {
                 e.stopPropagation();
                 if (e.target.closest('.kp-dd-pos-item')) return;
                 posDd.classList.toggle('open');
             });
-
             posDdMenu.querySelectorAll('.kp-dd-pos-item').forEach(item => {
                 item.addEventListener('click', (e) => {
                     e.stopPropagation();
@@ -2756,10 +2115,8 @@
                 settings.phoneTheme = next;
                 themeToggle.dataset.theme = next;
                 saveSettings();
-
                 invalidateThemeCache();
                 applyThemeInPlace();
-
                 showToast(next === 'light' ? 'Светлая тема' : 'Тёмная тема');
             });
         }
@@ -2768,23 +2125,17 @@
             const btn = e.target.closest('button');
             if (!btn) return;
             e.stopPropagation();
-            if (btn.id === 'kp-update-check-btn') {
-                checkForUpdates();
-            } else if (btn.id === 'kp-update-install-btn') {
+            if (btn.id === 'kp-update-check-btn') checkForUpdates();
+            else if (btn.id === 'kp-update-install-btn') {
                 const url = (_updateResult && _updateResult.url) || CONFIG.UPDATE_URL;
                 window.open(url, '_blank', 'noopener');
             }
         });
 
         panel.querySelector('#kp-save-settings').addEventListener('click', () => {
-            if (channelDd) {
-                settings.targetDomain = channelDd.dataset.value;
-            }
-            if (embedToggle) {
-                settings.embedMode = embedToggle.dataset.state === 'on';
-            } else {
-                settings.embedMode = false;
-            }
+            if (channelDd) settings.targetDomain = channelDd.dataset.value;
+            if (embedToggle) settings.embedMode = embedToggle.dataset.state === 'on';
+            else settings.embedMode = false;
             if (!settings.embedMode && posDd) {
                 const posKey = posDd.dataset.value;
                 const pos = CONFIG.POSITIONS[posKey] || CONFIG.POSITIONS['left-middle'];
@@ -2799,24 +2150,19 @@
         });
 
         document.body.appendChild(panel);
-
         renderUpdateView(_updateState);
         applyUpdateIndicator(_updateState === 'new');
-
         return panel;
     }
 
     function parseMetaText(text) {
         const result = { year: '', genres: '' };
         if (!text) return result;
-
         let cleaned = text.trim().replace(/^с\s+/i, '');
         const parts = cleaned.split(',').map(s => s.trim()).filter(Boolean);
         if (parts.length === 0) return result;
-
         const yearMatch = parts[0].match(/\d{4}/);
         if (yearMatch) result.year = yearMatch[0];
-
         const genreList = [];
         for (let i = 1; i < parts.length; i++) {
             const p = parts[i];
@@ -2837,9 +2183,7 @@
         let best = '';
         for (const h of h1s) {
             const txt = (h.textContent || '').trim();
-            if (txt.length >= 2 && txt.length <= 150 && txt.length > best.length) {
-                best = txt;
-            }
+            if (txt.length >= 2 && txt.length <= 150 && txt.length > best.length) best = txt;
         }
         return best;
     }
@@ -2847,8 +2191,7 @@
     function heuristicFindMeta() {
         const result = { year: '', genres: '' };
         const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
-        let count = 0;
-        let node;
+        let count = 0, node;
         while ((node = walker.nextNode()) && count < 500) {
             count++;
             const text = (node.textContent || '').trim();
@@ -2864,43 +2207,28 @@
 
     function computeMovieData(kpId) {
         let title = '';
-
         const titleTextEl = document.querySelector('[data-tid="ecbdef09"]');
         if (titleTextEl) {
             const txt = (titleTextEl.textContent || '').trim();
             if (txt) title = txt;
         }
-
         if (!title) {
-            const titleImg = document.querySelector('h1[class*="style_title__"] img[alt]')
-                          || document.querySelector('h1[class*="styles_movieTitleRoot"] img[alt]');
+            const titleImg = document.querySelector('h1[class*="style_title__"] img[alt]') || document.querySelector('h1[class*="styles_movieTitleRoot"] img[alt]');
             if (titleImg) {
                 const alt = (titleImg.getAttribute('alt') || '').trim();
                 if (alt) title = alt;
             }
         }
-
         if (!title) {
-            const el = document.querySelector('[data-tid="FilmTitle"]')
-                    || document.querySelector('h1[itemprop="name"] span');
+            const el = document.querySelector('[data-tid="FilmTitle"]') || document.querySelector('h1[itemprop="name"] span');
             if (el) {
                 const txt = (el.textContent || '').trim();
                 if (txt) title = txt;
             }
         }
-
-        if (!title) {
-            const h = heuristicFindTitle();
-            if (h) title = h;
-        }
-
-        if (!title) {
-            title = document.title.split(' — ')[0] || 'Без названия';
-        }
-
-        let year = '';
-        let genres = '';
-
+        if (!title) { const h = heuristicFindTitle(); if (h) title = h; }
+        if (!title) title = document.title.split(' — ')[0] || 'Без названия';
+        let year = '', genres = '';
         const metaEl = document.querySelector('[data-tid="70553ae9"]');
         if (metaEl) {
             const firstDiv = metaEl.querySelector('div');
@@ -2911,45 +2239,30 @@
                 genres = parsed.genres;
             }
         }
-
         if (!year) {
-            const yearLink = document.querySelector('[data-test-id="year"] a')
-                           || document.querySelector('a[href*="/year/"]');
-            if (yearLink) {
-                year = (yearLink.textContent || '').trim();
-            } else {
+            const yearLink = document.querySelector('[data-test-id="year"] a') || document.querySelector('a[href*="/year/"]');
+            if (yearLink) year = (yearLink.textContent || '').trim();
+            else {
                 const m = document.title.match(/\((\d{4})\)/);
                 if (m) year = m[1];
             }
         }
-
         if (!year) {
             const h = heuristicFindMeta();
-            if (h.year) {
-                year = h.year;
-                genres = h.genres;
-            }
+            if (h.year) { year = h.year; genres = h.genres; }
         }
-
         if (!genres) {
             const genreLinks = document.querySelectorAll('[data-test-id="genres"] a[href*="/lists/movies/genre--"]');
             genres = Array.from(genreLinks).map(a => a.textContent.trim()).join(', ');
         }
-
         let posterUrl = '';
-        const posterImg = document.querySelector('img[data-tid="d813cf42"]')
-            || document.querySelector('.film-poster img')
-            || document.querySelector('[data-tid="FilmPoster"] img');
-        if (posterImg && posterImg.src) {
-            posterUrl = posterImg.src;
-        } else {
+        const posterImg = document.querySelector('img[data-tid="d813cf42"]') || document.querySelector('.film-poster img') || document.querySelector('[data-tid="FilmPoster"] img');
+        if (posterImg && posterImg.src) posterUrl = posterImg.src;
+        else {
             const ogImage = document.querySelector('meta[property="og:image"]');
             if (ogImage) posterUrl = ogImage.getAttribute('content');
         }
-        if (!posterUrl && kpId) {
-            posterUrl = CONFIG.POSTER_TEMPLATE.replace('{id}', kpId);
-        }
-
+        if (!posterUrl && kpId) posterUrl = CONFIG.POSTER_TEMPLATE.replace('{id}', kpId);
         let rating = '';
         const ratingCandidates = document.querySelectorAll('[data-tid="939058a8"]');
         for (const el of ratingCandidates) {
@@ -2957,15 +2270,8 @@
             const match = text.match(/([\d.]+)/);
             if (match) { rating = match[1]; break; }
         }
-
         if (!rating) {
-            const ratingSelectors = [
-                '.film-rating-value span',
-                '[data-tid="kp-movie-rating.rating-value"] span',
-                '.styles_rating__value',
-                'span[itemprop="ratingValue"]',
-                'meta[itemprop="ratingValue"]'
-            ];
+            const ratingSelectors = ['.film-rating-value span', '[data-tid="kp-movie-rating.rating-value"] span', '.styles_rating__value', 'span[itemprop="ratingValue"]', 'meta[itemprop="ratingValue"]'];
             for (const sel of ratingSelectors) {
                 const el = document.querySelector(sel);
                 if (el) {
@@ -2975,25 +2281,16 @@
                 }
             }
         }
-
         return { id: kpId, title, year, posterUrl, rating, genres, addedAt: Date.now() };
     }
 
     function getCurrentMovieData() {
         const kpId = extractKpId();
         if (!kpId) return null;
-
         const now = Date.now();
-        if (_movieDataCache.id === kpId && _movieDataCache.data && (now - _movieDataCache.ts) < CONFIG.MOVIE_DATA_CACHE_TTL) {
-            return _movieDataCache.data;
-        }
-
+        if (_movieDataCache.id === kpId && _movieDataCache.data && (now - _movieDataCache.ts) < CONFIG.MOVIE_DATA_CACHE_TTL) return _movieDataCache.data;
         const data = computeMovieData(kpId);
-
-        if (data && data.title && data.title !== 'Без названия' && data.year) {
-            _movieDataCache = { id: kpId, data, ts: now };
-        }
-
+        if (data && data.title && data.title !== 'Без названия' && data.year) _movieDataCache = { id: kpId, data, ts: now };
         return data;
     }
 
@@ -3002,358 +2299,612 @@
         catch (e) { return []; }
     }
 
-    function saveMovie(movie) {
-        const movies = getSavedMovies();
-        if (!movies.some(m => m.id === movie.id)) {
-            movies.push(movie);
-            localStorage.setItem(CONFIG.SAVED_STORAGE_KEY, JSON.stringify(movies));
-            return true;
-        }
-        return false;
+    function setSavedMovies(arr) {
+        try { localStorage.setItem(CONFIG.SAVED_STORAGE_KEY, JSON.stringify(arr)); } catch (e) {}
     }
 
-    function removeMovie(id) {
-        const movies = getSavedMovies().filter(m => m.id !== id);
-        localStorage.setItem(CONFIG.SAVED_STORAGE_KEY, JSON.stringify(movies));
+    function saveMovie(movie) {
+        const movies = getSavedMovies();
+        const existing = movies.find(m => m.id === movie.id);
+        if (existing) {
+            if (existing.tabId !== activeTabId && tabs.some(t => t.id === existing.tabId)) {
+                activeTabId = existing.tabId;
+                saveActiveTabId();
+                return 'switched';
+            }
+            return 'exists';
+        }
+        movies.push({ ...movie, tabId: activeTabId });
+        setSavedMovies(movies);
+        return 'saved';
+    }
+
+    function removeMovie(id, tabId) {
+        const movies = getSavedMovies().filter(m => !(m.id === id && m.tabId === (tabId || activeTabId)));
+        setSavedMovies(movies);
+    }
+
+    // ============================================================
+    // Универсальная функция импорта — используется и share-ссылкой,
+    // и импортом файла. Объединение по имени вкладки, создание
+    // отсутствующих вкладок, дедупликация по id.
+    // ============================================================
+    function applyImportedTabs(incomingTabs) {
+        let totalAdded = 0;
+        let tabsCreated = 0;
+        const allExisting = getSavedMovies();
+        const allExistingIds = new Set(allExisting.map(m => String(m.id)));
+
+        incomingTabs.forEach(incoming => {
+            const movies = incoming.movies || [];
+            if (movies.length === 0) return;
+
+            const incomingName = String(incoming.name || CONFIG.DEFAULT_TAB_NAME).slice(0, CONFIG.TAB_NAME_MAX);
+            let targetTab = tabs.find(t => t.name.toLowerCase() === incomingName.toLowerCase());
+            if (!targetTab) {
+                targetTab = { id: 't' + Date.now() + Math.random(), name: incomingName, sort: 'date-desc' };
+                tabs.push(targetTab);
+                tabsCreated++;
+            }
+
+            movies.forEach((item, idx) => {
+                let id, title, year, posterUrl, rating, genres;
+                if (Array.isArray(item)) {
+                    id = String(item[0] || '');
+                    title = item[1] || '';
+                    year = item[2] || '';
+                    posterUrl = ''; rating = ''; genres = '';
+                } else if (item && typeof item === 'object') {
+                    id = String(item.id || '');
+                    title = item.title || '';
+                    year = item.year || '';
+                    posterUrl = item.posterUrl || '';
+                    rating = item.rating || '';
+                    genres = item.genres || '';
+                } else return;
+
+                if (!id || allExistingIds.has(id)) return;
+                allExisting.push({
+                    id, title, year,
+                    posterUrl: posterUrl || CONFIG.POSTER_TEMPLATE.replace('{id}', id),
+                    rating, genres,
+                    tabId: targetTab.id,
+                    addedAt: Date.now() + idx
+                });
+                allExistingIds.add(id);
+                totalAdded++;
+            });
+        });
+
+        setSavedMovies(allExisting);
+        saveTabs();
+        return { totalAdded, tabsCreated };
     }
 
     function createSavedPanel() {
         if (document.getElementById('kp-saved-panel')) return document.getElementById('kp-saved-panel');
+        if (!document.getElementById('kp-saved-panel-style')) injectStyleWhenHeadReady('kp-saved-panel-style', SETTINGS_PANEL_STYLES);
+
         const panel = document.createElement('div');
         panel.id = 'kp-saved-panel';
-        const bgColor = getPanelBackground();
-        const textColor = getPanelTextColor();
-        Object.assign(panel.style, {
-            zIndex: '1000001',
-            background: bgColor,
-            borderRadius: CONFIG.PANEL_RADIUS,
-            color: textColor,
-            fontFamily: 'Segoe UI, Arial, sans-serif',
-            fontSize: getPanelFontSize(),
-            width: CONFIG.SAVED_PANEL_WIDTH,
-            maxWidth: 'calc(100vw - 24px)',
-            display: 'none',
-            flexDirection: 'column',
-            overflow: 'hidden',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
-            boxSizing: 'border-box'
-        });
-        const hideScrollStyle = document.createElement('style');
-        hideScrollStyle.textContent = '#kp-saved-panel *::-webkit-scrollbar { display: none; }';
-        document.head.appendChild(hideScrollStyle);
+        panel.className = 'kp-saved-panel';
+        panel.dataset.theme = isDarkTheme() ? 'dark' : 'light';
+        panel.style.fontSize = getPanelFontSize();
 
-        const headerBtnHeight = isPhone ? 30 : 22;
-
-        const header = document.createElement('div');
-        header.style.cssText = `flex-shrink: 0; background: ${bgColor}; padding: 4px 10px 4px; border-bottom: 1px solid rgba(0,0,0,0.1);`;
-        header.innerHTML = `
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; flex-wrap:nowrap;">
-                <span style="
-                    font-weight:600; font-size:13px;
-                    flex:1 1 auto; min-width:0;
-                    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
-                    <span style="opacity:0.65;">Закладки</span><span id="kp-saved-count" style="color:${textColor};"></span>
-                </span>
-                <div style="display:flex; gap:4px; align-items:center; flex-shrink:0;">
-                    <button id="kp-share-btn" title="Поделиться / Импорт закладок" style="
-                        background:#427552; border:none; color:#fff;
-                        padding:0 8px;
-                        height:${headerBtnHeight}px;
-                        border-radius:14px;
-                        cursor:pointer; font-weight:600;
-                        display:inline-flex; align-items:center; justify-content:center;
-                        box-sizing:border-box; line-height:1;
-                        touch-action:manipulation; -webkit-tap-highlight-color:transparent;">
+        panel.innerHTML = `
+            <div class="kp-saved-header">
+                <div class="kp-saved-title">
+                    <span style="opacity:0.65;">Закладки</span><span id="kp-saved-count"></span>
+                </div>
+                <div class="kp-saved-actions">
+                    <button class="kp-saved-btn icon-only" id="kp-share-btn-el" title="Поделиться">
                         ${svgIcon('share', isPhone ? 16 : 13)}
                     </button>
-                    <button id="kp-save-current-btn" title="Сохранить текущий фильм в закладки" style="
-                        background:#427552; border:none; color:#fff;
-                        padding:0 ${isPhone ? '10px' : '8px'};
-                        height:${headerBtnHeight}px;
-                        border-radius:14px;
-                        font-size:${isPhone ? '13px' : '12px'};
-                        cursor:pointer; font-weight:600;
-                        display:inline-flex; align-items:center; justify-content:center; gap:4px;
-                        box-sizing:border-box; line-height:1;
-                        touch-action:manipulation; -webkit-tap-highlight-color:transparent;">
+                    <button class="kp-saved-btn" id="kp-save-current-btn" title="Сохранить текущий фильм в активную вкладку">
                         <span style="color:#ef4444;display:inline-flex;align-items:center;">${svgIcon('mapPin', isPhone ? 14 : 12)}</span><span>Сохранить</span>
                     </button>
                 </div>
             </div>
+
+            <div class="kp-tabs-bar">
+                <div class="kp-tabs-scroll" id="kp-tabs-scroll"></div>
+                <div class="kp-tabs-actions">
+                    <div class="kp-sort-wrap">
+                        <button class="kp-tab-action-btn" id="kp-sort-btn-el" title="Фильтр и управление вкладкой">
+                            ${svgIcon('filter', isPhone ? 16 : 13)}
+                        </button>
+                        <div class="kp-sort-menu" id="kp-sort-menu">
+                            <div class="kp-rename-row">
+                                <button class="kp-rename-delete" id="kp-delete-tab-btn" title="Удалить вкладку">
+                                    ${svgIcon('trash', 20)}
+                                </button>
+                                <input type="text" class="kp-rename-input" id="kp-rename-input" placeholder="Название" maxlength="${CONFIG.TAB_NAME_MAX}">
+                                <button class="kp-rename-apply" id="kp-rename-confirm" title="Применить">
+                                    ${svgIcon('check', 20)}
+                                </button>
+                            </div>
+                            <div class="kp-sort-divider"></div>
+                            <div class="kp-sort-section">Сортировка</div>
+                            <div class="kp-sort-item active" data-sort="date-desc">${svgIcon('sortDateDesc', 12)}<span>Сначала новые</span></div>
+                            <div class="kp-sort-item" data-sort="date-asc">${svgIcon('sortDateAsc', 12)}<span>Сначала старые</span></div>
+                            <div class="kp-sort-item" data-sort="name-asc">${svgIcon('sortNameAsc', 12)}<span>По алфавиту А–Я</span></div>
+                            <div class="kp-sort-item" data-sort="name-desc">${svgIcon('sortNameDesc', 12)}<span>По алфавиту Я–А</span></div>
+                            <div class="kp-sort-item" data-sort="rating-desc">${svgIcon('sortRating', 12)}<span>По рейтингу КП</span></div>
+                        </div>
+                    </div>
+                    <div class="kp-add-wrap">
+                        <button class="kp-tab-action-btn" id="kp-add-btn-el" title="Добавить вкладку">
+                            ${svgIcon('plus', isPhone ? 16 : 13)}
+                        </button>
+                        <div class="kp-add-popup" id="kp-add-popup">
+                            <div class="kp-add-input-wrap">
+                                <input type="text" class="kp-add-input" id="kp-add-input" placeholder="Название + Enter" maxlength="${CONFIG.TAB_NAME_MAX}">
+                                <span class="kp-add-counter" id="kp-add-counter">0/${CONFIG.TAB_NAME_MAX}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="kp-saved-list" id="kp-saved-list"></div>
+
+            <div class="kp-share-view" id="kp-share-view">
+                <div class="kp-share-toggle" id="kp-share-toggle">
+                    <button class="active" data-mode="current">Текущая вкладка</button>
+                    <button data-mode="all">Все вкладки</button>
+                </div>
+                <button class="kp-share-qr-btn" id="kp-share-qr-btn">
+                    ${svgIcon('qr', 14)}<span>Показать QR-код</span>
+                </button>
+                <div class="kp-share-link-row">
+                    <input type="text" class="kp-share-link-input" id="kp-share-link-input" readonly value="">
+                    <button class="kp-share-copy" id="kp-share-copy" title="Копировать">${svgIcon('copy', 14)}</button>
+                </div>
+                <div class="kp-share-actions">
+                    <button class="kp-share-action-btn" id="kp-share-export">${svgIcon('upload', 13)}<span>Экспорт</span></button>
+                    <button class="kp-share-action-btn" id="kp-share-import">${svgIcon('download', 13)}<span>Импорт</span></button>
+                </div>
+                <div class="kp-share-info" id="kp-share-info"></div>
+            </div>
         `;
-        panel.appendChild(header);
-
-        const list = document.createElement('div');
-        list.id = 'kp-saved-list';
-        list.style.cssText = 'display: flex; flex-direction: column; gap: 4px; padding: 4px; flex: 1 1 auto; min-height: 0; overflow-y: auto; box-sizing: border-box;';
-        list.style.maxHeight = CONFIG.SAVED_LIST_MAX_HEIGHT;
-        list.style.setProperty('scrollbar-width', 'none', 'important');
-        list.style.setProperty('-ms-overflow-style', 'none', 'important');
-        panel.appendChild(list);
-
-        const shareView = document.createElement('div');
-        shareView.id = 'kp-share-view';
-        shareView.style.cssText = 'display: none; flex-direction: column; gap: 8px; padding: 10px 8px; flex: 0 0 auto; box-sizing: border-box;';
-
-        const qrContainer = document.createElement('div');
-        qrContainer.id = 'kp-qr-container';
-        qrContainer.style.cssText = 'display: flex; align-items: center; justify-content: center; color: #888; font-size: 12px; min-height: 40px;';
-        shareView.appendChild(qrContainer);
-
-        const linkRow = document.createElement('div');
-        linkRow.style.cssText = 'display: flex; gap: 4px; align-items: stretch;';
-        const linkInput = document.createElement('input');
-        linkInput.id = 'kp-share-link-input';
-        linkInput.type = 'text';
-        linkInput.readOnly = true;
-        linkInput.value = '';
-        Object.assign(linkInput.style, {
-            flex: '1 1 auto', minWidth: '0', padding: '6px 8px',
-            border: '1px solid rgba(0,0,0,0.15)', borderRadius: '8px',
-            fontSize: '11px', background: 'rgba(0,0,0,0.05)',
-            color: textColor, boxSizing: 'border-box', outline: 'none'
-        });
-        linkRow.appendChild(linkInput);
-
-        const copyBtn = document.createElement('button');
-        copyBtn.id = 'kp-share-copy-btn';
-        copyBtn.title = 'Копировать ссылку';
-        copyBtn.innerHTML = svgIcon('copy', 14);
-        copyBtn.style.cssText = 'flex: 0 0 auto; width: 38px; padding: 0; border: none; border-radius: 8px; background: #427552; color: #fff; cursor: pointer; font-family: inherit; transition: opacity 0.2s; touch-action: manipulation; -webkit-tap-highlight-color: transparent; display: inline-flex; align-items: center; justify-content: center;';
-        linkRow.appendChild(copyBtn);
-        shareView.appendChild(linkRow);
-
-        const actionRow = document.createElement('div');
-        actionRow.style.cssText = 'display: flex; gap: 4px;';
-        const exportBtn = document.createElement('button');
-        exportBtn.innerHTML = svgIcon('upload', 13) + '<span>Экспорт</span>';
-        exportBtn.style.cssText = 'flex: 1 1 0; padding: 8px 10px; border: none; border-radius: 8px; background: rgba(99,102,241,0.15); color: ' + textColor + '; font-weight: 600; cursor: pointer; font-size: 12px; font-family: inherit; touch-action: manipulation; -webkit-tap-highlight-color: transparent; display: inline-flex; align-items: center; justify-content: center; gap: 5px;';
-        actionRow.appendChild(exportBtn);
-
-        const importBtn = document.createElement('button');
-        importBtn.innerHTML = svgIcon('download', 13) + '<span>Импорт</span>';
-        importBtn.style.cssText = 'flex: 1 1 0; padding: 8px 10px; border: none; border-radius: 8px; background: rgba(99,102,241,0.15); color: ' + textColor + '; font-weight: 600; cursor: pointer; font-size: 12px; font-family: inherit; touch-action: manipulation; -webkit-tap-highlight-color: transparent; display: inline-flex; align-items: center; justify-content: center; gap: 5px;';
-        actionRow.appendChild(importBtn);
-        shareView.appendChild(actionRow);
-
-        const hint = document.createElement('div');
-        hint.id = 'kp-share-hint';
-        hint.style.cssText = 'font-size: 11px; color: #888; line-height: 1.4; text-align: center;';
-        shareView.appendChild(hint);
-
-        panel.appendChild(shareView);
 
         document.body.appendChild(panel);
 
-        panel.querySelector('#kp-save-current-btn').addEventListener('click', (e) => {
-            e.stopPropagation();
-            const movie = getCurrentMovieData();
-            if (movie) {
-                const saved = saveMovie(movie);
-                renderSavedMovies(panel);
-                if (saved) showToast('Добавлено в закладки');
-                else showToast('Уже в закладках');
+        const tabsScroll = panel.querySelector('#kp-tabs-scroll');
+        const savedList = panel.querySelector('#kp-saved-list');
+        const shareView = panel.querySelector('#kp-share-view');
+
+        function renderTabs() {
+            tabsScroll.innerHTML = '';
+            tabs.forEach(tab => {
+                const el = document.createElement('div');
+                el.className = 'kp-tab' + (tab.id === activeTabId ? ' active' : '');
+                el.dataset.id = tab.id;
+                el.title = tab.name;
+                const span = document.createElement('span');
+                span.textContent = tab.name;
+                el.appendChild(span);
+                el.addEventListener('click', () => {
+                    activeTabId = tab.id;
+                    saveActiveTabId();
+                    renderTabs();
+                    renderSavedMovies();
+                    updateRenameField();
+                    if (shareView.classList.contains('open')) updateShareContent();
+                });
+                tabsScroll.appendChild(el);
+            });
+            const activeEl = tabsScroll.querySelector('.kp-tab.active');
+            if (activeEl) activeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+        }
+
+        tabsScroll.addEventListener('wheel', (e) => {
+            if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+                e.preventDefault();
+                tabsScroll.scrollLeft += e.deltaY;
             }
+        }, { passive: false });
+
+        const sortBtn = panel.querySelector('#kp-sort-btn-el');
+        const sortMenu = panel.querySelector('#kp-sort-menu');
+        sortBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            panel.querySelector('#kp-add-popup').classList.remove('open');
+            sortMenu.classList.toggle('open');
+            if (sortMenu.classList.contains('open')) updateRenameField();
         });
 
-        panel.querySelector('#kp-share-btn').addEventListener('click', (e) => {
-            e.stopPropagation();
-            toggleShareView(panel);
+        sortMenu.querySelectorAll('.kp-sort-item[data-sort]').forEach(item => {
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const tab = getActiveTab();
+                tab.sort = item.dataset.sort;
+                saveTabs();
+                sortMenu.querySelectorAll('.kp-sort-item[data-sort]').forEach(el => el.classList.remove('active'));
+                item.classList.add('active');
+                renderSavedMovies();
+            });
         });
 
-        copyBtn.addEventListener('click', (e) => {
+        panel.querySelector('#kp-rename-confirm').addEventListener('click', (e) => {
             e.stopPropagation();
-            if (copyBtn.dataset.disabled === '1') {
-                showToast('Ссылка слишком длинная для копирования');
+            const val = panel.querySelector('#kp-rename-input').value.trim().slice(0, CONFIG.TAB_NAME_MAX);
+            if (!val) return;
+            const tab = getActiveTab();
+            tab.name = val;
+            saveTabs();
+            renderTabs();
+            sortMenu.classList.remove('open');
+            showToast('Вкладка переименована');
+        });
+
+        panel.querySelector('#kp-delete-tab-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (tabs.length <= 1) {
+                showToast('Нельзя удалить последнюю вкладку');
                 return;
             }
+            const idx = tabs.findIndex(t => t.id === activeTabId);
+            if (idx === -1) return;
+            const removed = tabs.splice(idx, 1)[0];
+            const movies = getSavedMovies().filter(m => m.tabId !== removed.id);
+            setSavedMovies(movies);
+            activeTabId = tabs[Math.max(0, idx - 1)].id;
+            saveTabs();
+            saveActiveTabId();
+            sortMenu.classList.remove('open');
+            renderTabs();
+            renderSavedMovies();
+            updateRenameField();
+            showToast(`Вкладка «${removed.name}» удалена`);
+        });
+
+        const addBtn = panel.querySelector('#kp-add-btn-el');
+        const addPopup = panel.querySelector('#kp-add-popup');
+        const addInput = panel.querySelector('#kp-add-input');
+        const addCounter = panel.querySelector('#kp-add-counter');
+
+        addBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            sortMenu.classList.remove('open');
+            addPopup.classList.toggle('open');
+            if (addPopup.classList.contains('open')) {
+                addInput.value = '';
+                addCounter.textContent = `0/${CONFIG.TAB_NAME_MAX}`;
+                setTimeout(() => addInput.focus(), 50);
+            }
+        });
+
+        addInput.addEventListener('input', () => {
+            addCounter.textContent = `${addInput.value.length}/${CONFIG.TAB_NAME_MAX}`;
+        });
+
+        function createTab() {
+            const name = addInput.value.trim().slice(0, CONFIG.TAB_NAME_MAX);
+            if (!name) return;
+            if (tabs.some(t => t.name.toLowerCase() === name.toLowerCase())) {
+                showToast('Вкладка с таким названием уже есть');
+                return;
+            }
+            const id = 't' + Date.now();
+            tabs.push({ id, name, sort: 'date-desc' });
+            activeTabId = id;
+            saveTabs();
+            saveActiveTabId();
+            addPopup.classList.remove('open');
+            renderTabs();
+            renderSavedMovies();
+            updateRenameField();
+            showToast(`Вкладка «${name}» создана`);
+        }
+
+        addInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') createTab(); });
+
+        // === Share view ===
+        const shareBtn = panel.querySelector('#kp-share-btn-el');
+        const shareToggle = panel.querySelector('#kp-share-toggle');
+        const shareQrBtn = panel.querySelector('#kp-share-qr-btn');
+        const shareLink = panel.querySelector('#kp-share-link-input');
+        const shareInfo = panel.querySelector('#kp-share-info');
+        const shareCopy = panel.querySelector('#kp-share-copy');
+
+        let shareMode = 'current';
+
+        // Сброс share-view в исходное состояние.
+        // Вызывается при закрытии панели закладок (клик вне или повторное нажатие
+        // на иконку закладок), чтобы при следующем открытии показывался
+        // список закладок, а не окно «Поделиться».
+        function resetShareView() {
+            shareView.classList.remove('open');
+            savedList.style.display = 'flex';
+            panel.classList.remove('share-open');
+            shareMode = 'current';
+            shareToggle.querySelectorAll('button').forEach(x => x.classList.remove('active'));
+            const curBtn = shareToggle.querySelector('button[data-mode="current"]');
+            if (curBtn) curBtn.classList.add('active');
+        }
+
+        function buildShareLinkForMode(mode) {
+            const payload = { v: 1 };
+            if (mode === 'all') {
+                payload.tabs = tabs.map(t => {
+                    const movies = getSavedMovies().filter(m => m.tabId === t.id);
+                    return {
+                        name: t.name,
+                        movies: movies.map(m => [String(m.id), m.title || '', m.year || ''])
+                    };
+                }).filter(t => t.movies.length > 0);
+            } else {
+                const t = getActiveTab();
+                const movies = getSavedMovies().filter(m => m.tabId === t.id);
+                if (movies.length === 0) {
+                    payload.tabs = [];
+                } else {
+                    payload.tabs = [{
+                        name: t.name,
+                        movies: movies.map(m => [String(m.id), m.title || '', m.year || ''])
+                    }];
+                }
+            }
+            const json = JSON.stringify(payload);
+            const encoded = encodeToUrl(json);
+            const baseUrl = location.origin + location.pathname;
+            const sep = location.search ? '&' : '?';
+            return baseUrl + sep + CONFIG.SHARE_QUERY_KEY + '=' + encoded;
+        }
+
+        function updateShareContent() {
+            const activeMovies = getSavedMovies().filter(m => m.tabId === activeTabId);
+            const allMovies = getSavedMovies();
+            const totalMovies = shareMode === 'all' ? allMovies.length : activeMovies.length;
+            const isEmpty = shareMode === 'current' ? activeMovies.length === 0 : allMovies.length === 0;
+
+            if (isEmpty) {
+                shareLink.value = '';
+                shareCopy.disabled = true;
+                shareQrBtn.disabled = true;
+                shareQrBtn.title = 'Нечего делиться';
+                if (shareMode === 'current') {
+                    shareInfo.textContent = 'Текущая вкладка пуста — нечего делиться';
+                } else {
+                    shareInfo.textContent = 'Нет закладок для экспорта';
+                }
+                return;
+            }
+
+            const link = buildShareLinkForMode(shareMode);
+            shareLink.value = link;
+            shareCopy.disabled = false;
+            shareQrBtn.title = 'Показать QR-код';
+
+            if (shareMode === 'all') {
+                const nonEmptyTabs = tabs.filter(t => getSavedMovies().some(m => m.tabId === t.id));
+                shareInfo.textContent = `Все вкладки • ${nonEmptyTabs.length} шт • ${totalMovies} закладок • ${link.length} симв.`;
+            } else {
+                shareInfo.textContent = `Вкладка «${getActiveTab().name}» • ${totalMovies} закладок • ${link.length} симв.`;
+            }
+
+            if (link.length > CONFIG.QR_MAX_LENGTH) {
+                shareQrBtn.disabled = true;
+                shareQrBtn.title = 'Слишком много данных для QR-кода';
+            } else {
+                shareQrBtn.disabled = false;
+            }
+        }
+
+        shareBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            sortMenu.classList.remove('open');
+            addPopup.classList.remove('open');
+            const isOpen = shareView.classList.contains('open');
+            if (isOpen) {
+                resetShareView();
+            } else {
+                shareView.classList.add('open');
+                savedList.style.display = 'none';
+                panel.classList.add('share-open');
+                updateShareContent();
+            }
+        });
+
+        shareToggle.querySelectorAll('button').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                shareMode = btn.dataset.mode;
+                shareToggle.querySelectorAll('button').forEach(x => x.classList.remove('active'));
+                btn.classList.add('active');
+                updateShareContent();
+            });
+        });
+
+        shareQrBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (shareQrBtn.disabled) return;
+            const link = shareLink.value;
+            if (!link) return;
+            const qrUrl = CONFIG.QR_SERVICE_URL + '?size=300x300&margin=10&data=' + encodeURIComponent(link);
+            window.open(qrUrl, '_blank', 'noopener');
+        });
+
+        shareCopy.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (shareCopy.disabled) return;
             const doCopy = () => showToast('Ссылка скопирована');
             if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(linkInput.value).then(doCopy).catch(() => {
-                    linkInput.select();
+                navigator.clipboard.writeText(shareLink.value).then(doCopy).catch(() => {
+                    shareLink.select();
                     try { document.execCommand('copy'); doCopy(); } catch (err) {}
                 });
             } else {
-                linkInput.select();
+                shareLink.select();
                 try { document.execCommand('copy'); doCopy(); } catch (err) {}
             }
         });
 
-        exportBtn.addEventListener('click', (e) => {
+        panel.querySelector('#kp-share-export').addEventListener('click', (e) => {
             e.stopPropagation();
             exportToFile();
         });
-
-        importBtn.addEventListener('click', (e) => {
+        panel.querySelector('#kp-share-import').addEventListener('click', (e) => {
             e.stopPropagation();
             importFromFile().then(() => {
-                updateShareViewContent(panel);
-                renderSavedMovies(panel);
+                updateShareContent();
+                if (panel._renderTabs) panel._renderTabs();
+                renderSavedMovies();
             });
         });
+
+        // === Сохранить ===
+        panel.querySelector('#kp-save-current-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            const movie = getCurrentMovieData();
+            if (!movie) return;
+            const result = saveMovie(movie);
+            if (result === 'switched') {
+                if (panel._renderTabs) panel._renderTabs();
+                renderSavedMovies();
+                showToast('Фильм уже в другой вкладке — переключились');
+            } else if (result === 'saved') {
+                renderSavedMovies();
+                showToast('Добавлено в закладки');
+            } else {
+                showToast('Уже в закладках');
+            }
+        });
+
+        function updateRenameField() {
+            const tab = getActiveTab();
+            panel.querySelector('#kp-rename-input').value = tab.name;
+            sortMenu.querySelectorAll('.kp-sort-item[data-sort]').forEach(el => {
+                el.classList.toggle('active', el.dataset.sort === tab.sort);
+            });
+            const delBtn = panel.querySelector('#kp-delete-tab-btn');
+            if (delBtn) {
+                if (tabs.length <= 1) {
+                    delBtn.style.opacity = '0.4';
+                    delBtn.style.cursor = 'not-allowed';
+                    delBtn.title = 'Нельзя удалить последнюю';
+                } else {
+                    delBtn.style.opacity = '';
+                    delBtn.style.cursor = '';
+                    delBtn.title = 'Удалить вкладку';
+                }
+            }
+        }
+
+        function renderSavedMovies() {
+            const tab = getActiveTab();
+            let items = getSavedMovies().filter(m => m.tabId === tab.id);
+
+            const sort = tab.sort;
+            items = items.slice().sort((a, b) => {
+                switch (sort) {
+                    case 'date-desc':   return (b.addedAt || 0) - (a.addedAt || 0);
+                    case 'date-asc':    return (a.addedAt || 0) - (b.addedAt || 0);
+                    case 'name-asc':    return (a.title || '').localeCompare(b.title || '', 'ru');
+                    case 'name-desc':   return (b.title || '').localeCompare(a.title || '', 'ru');
+                    case 'rating-desc': return (parseFloat(b.rating) || 0) - (parseFloat(a.rating) || 0);
+                    default: return 0;
+                }
+            });
+
+            const countSpan = panel.querySelector('#kp-saved-count');
+            if (countSpan) countSpan.textContent = items.length > 0 ? `: ${items.length}` : '';
+
+            savedList.innerHTML = '';
+
+            if (items.length === 0) {
+                savedList.innerHTML = '<div class="kp-empty">В этой вкладке пока пусто</div>';
+                return;
+            }
+
+            const cardHeight = 64;
+            const deleteZoneWidth = isPhone ? CONFIG.PHONE_DELETE_ZONE_WIDTH : CONFIG.DESKTOP_DELETE_ZONE_WIDTH;
+
+            const fragment = document.createDocumentFragment();
+            items.forEach(movie => {
+                const card = document.createElement('div');
+                card.className = 'kp-card';
+                const poster = movie.posterUrl || (movie.id ? CONFIG.POSTER_TEMPLATE.replace('{id}', movie.id) : '');
+                card.style.cssText = `
+                    position: relative; height: ${cardHeight}px; flex-shrink: 0; border-radius: 20px;
+                    background-image: url('${poster}'); background-size: cover; background-position: center;
+                    background-color: #1a1e2e;
+                    overflow: hidden; box-shadow: 0 0 0 1px rgba(0,0,0,0.1); cursor: pointer; transition: box-shadow 0.2s;
+                    will-change: transform; backface-visibility: hidden;
+                    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+                `;
+                card.addEventListener('mouseenter', () => card.style.boxShadow = '0 0 0 1px #818cf8');
+                card.addEventListener('mouseleave', () => card.style.boxShadow = '0 0 0 1px rgba(0,0,0,0.1)');
+                card.addEventListener('click', () => { window.location.href = `https://www.kinopoisk.ru/film/${movie.id}/`; });
+
+                const overlay = document.createElement('div');
+                overlay.style.cssText = `position: absolute; inset: -1px; background: linear-gradient(90deg, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.3) 100%); border-radius: 20px; z-index: 1;`;
+                card.appendChild(overlay);
+
+                const info = document.createElement('div');
+                info.style.cssText = `position: relative; z-index: 2; display: flex; flex-direction: column; justify-content: center; height: 100%; padding: 6px 10px; padding-right: calc(${deleteZoneWidth} + 10px); color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.8); box-sizing: border-box;`;
+                const displayTitle = escapeHtml(movie.title || ('ID ' + movie.id));
+                const displayYear = escapeHtml(movie.year || '');
+                const displayRating = escapeHtml(movie.rating || '');
+                const displayGenres = movie.genres ? escapeHtml(movie.genres.split(', ').slice(0, 4).join(', ')) : '';
+                info.innerHTML = `
+                    <div style="font-weight:600; font-size:12px; line-height:1.3; word-wrap:break-word; overflow-wrap:break-word;">${displayTitle}</div>
+                    <div style="font-size:10px; color:#ddd; margin-top:1px;">${displayYear}${displayRating ? ' • КП ' + displayRating : ''}</div>
+                    ${displayGenres ? `<div style="font-size:9px; color:#aaa; margin-top:1px; line-height:1.3; word-wrap:break-word; overflow-wrap:break-word;">${displayGenres}</div>` : ''}
+                `;
+                card.appendChild(info);
+
+                const deleteZone = document.createElement('div');
+                deleteZone.setAttribute('title', 'Удалить из закладок');
+                deleteZone.style.cssText = `
+                    position: absolute; top: 0; right: 0; bottom: 0; width: ${deleteZoneWidth};
+                    background: rgba(220, 38, 38, 0.35); border-radius: 0 20px 20px 0;
+                    display: flex; align-items: center; justify-content: center;
+                    z-index: 4; cursor: pointer; color: #fff;
+                    transition: background 0.15s; touch-action: manipulation;
+                    -webkit-tap-highlight-color: transparent; user-select: none;
+                `;
+                deleteZone.innerHTML = svgIcon('x', isPhone ? 16 : 12);
+                deleteZone.addEventListener('mouseenter', () => { deleteZone.style.background = 'rgba(220, 38, 38, 0.55)'; });
+                deleteZone.addEventListener('mouseleave', () => { deleteZone.style.background = 'rgba(220, 38, 38, 0.35)'; });
+                deleteZone.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    removeMovie(movie.id, tab.id);
+                    renderSavedMovies();
+                });
+                deleteZone.addEventListener('touchstart', (e) => {
+                    e.stopPropagation();
+                    deleteZone.style.background = 'rgba(220, 38, 38, 0.7)';
+                }, { passive: true });
+                deleteZone.addEventListener('touchend', (e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    removeMovie(movie.id, tab.id);
+                    renderSavedMovies();
+                });
+                card.appendChild(deleteZone);
+                fragment.appendChild(card);
+            });
+            savedList.appendChild(fragment);
+        }
+
+        panel._renderTabs = renderTabs;
+        panel._renderSavedMovies = renderSavedMovies;
+        panel._updateRenameField = updateRenameField;
+        panel._resetShareView = resetShareView;
+
+        renderTabs();
+        renderSavedMovies();
+        updateRenameField();
 
         return panel;
     }
 
-    function toggleShareView(panel) {
-        const list = panel.querySelector('#kp-saved-list');
-        const shareView = panel.querySelector('#kp-share-view');
-        const isShareVisible = shareView.style.display !== 'none';
-
-        if (isShareVisible) {
-            shareView.style.display = 'none';
-            list.style.display = 'flex';
-            renderSavedMovies(panel);
-        } else {
-            list.style.display = 'none';
-            shareView.style.display = 'flex';
-            updateShareViewContent(panel);
-        }
-    }
-
-    function updateShareViewContent(panel) {
-        const movies = getSavedMovies();
-        const linkInput = panel.querySelector('#kp-share-link-input');
-        const qrContainer = panel.querySelector('#kp-qr-container');
-        const hint = panel.querySelector('#kp-share-hint');
-        const copyBtn = panel.querySelector('#kp-share-copy-btn');
-
-        if (movies.length === 0) {
-            linkInput.value = '';
-            qrContainer.innerHTML = '<div style="color:#888;font-size:11px;text-align:center;">Нет закладок для экспорта</div>';
-            hint.textContent = 'Добавьте закладки, чтобы делиться ими.';
-            copyBtn.dataset.disabled = '1';
-            copyBtn.style.opacity = '0.45';
-            copyBtn.style.cursor = 'not-allowed';
-            return;
-        }
-
-        const link = buildShareLink();
-        linkInput.value = link;
-
-        const tooLong = link.length > CONFIG.QR_MAX_LENGTH;
-
-        if (tooLong) {
-            hint.innerHTML = '<span style="color:#ff8888;">⚠️ Слишком много закладок.<br>Ссылка не помещается в QR-код.<br>Используйте «Экспорт» в файл.</span>';
-            copyBtn.dataset.disabled = '1';
-            copyBtn.style.opacity = '0.45';
-            copyBtn.style.cursor = 'not-allowed';
-            qrContainer.innerHTML = '<div style="text-align:center;color:#ff8888;font-size:11px;line-height:1.5;padding:4px;">QR-код недоступен</div>';
-        } else {
-            hint.textContent = `Закладок: ${movies.length} • Размер ссылки: ${link.length} симв.`;
-            copyBtn.dataset.disabled = '0';
-            copyBtn.style.opacity = '1';
-            copyBtn.style.cursor = 'pointer';
-            renderQRButton(qrContainer, link);
-        }
-    }
-
-    function renderSavedMovies(panel) {
-        const list = panel.querySelector('#kp-saved-list');
-        const movies = getSavedMovies();
-        const countSpan = panel.querySelector('#kp-saved-count');
-        if (countSpan) {
-            countSpan.textContent = movies.length > 0 ? `: ${movies.length}` : '';
-        }
-        list.innerHTML = '';
-
-        if (movies.length === 0) {
-            list.innerHTML = '<div style="color:#888; text-align:center; padding:8px;">Пока ничего не сохранено</div>';
-            return;
-        }
-
-        const cardHeight = 64;
-        const deleteZoneWidth = isPhone ? CONFIG.PHONE_DELETE_ZONE_WIDTH : CONFIG.DESKTOP_DELETE_ZONE_WIDTH;
-
-        movies.sort((a, b) => b.addedAt - a.addedAt);
-
-        const fragment = document.createDocumentFragment();
-
-        movies.forEach(movie => {
-            const card = document.createElement('div');
-            const poster = movie.posterUrl || (movie.id ? CONFIG.POSTER_TEMPLATE.replace('{id}', movie.id) : '');
-            card.style.cssText = `
-                position: relative; height: ${cardHeight}px; flex-shrink: 0; border-radius: 20px;
-                background-image: url('${poster}'); background-size: cover; background-position: center;
-                background-color: #1a1e2e;
-                overflow: hidden; box-shadow: 0 0 0 1px rgba(0,0,0,0.1); cursor: pointer; transition: box-shadow 0.2s;
-                will-change: transform; backface-visibility: hidden;
-                touch-action: manipulation; -webkit-tap-highlight-color: transparent;
-            `;
-            card.addEventListener('mouseenter', () => card.style.boxShadow = '0 0 0 1px #818cf8');
-            card.addEventListener('mouseleave', () => card.style.boxShadow = '0 0 0 1px rgba(0,0,0,0.1)');
-            card.addEventListener('click', () => { window.location.href = `https://www.kinopoisk.ru/film/${movie.id}/`; });
-
-            const overlay = document.createElement('div');
-            overlay.style.cssText = `position: absolute; inset: -1px; background: linear-gradient(90deg, rgba(0,0,0,0.75) 0%, rgba(0,0,0,0.3) 100%); border-radius: 20px; z-index: 1;`;
-            card.appendChild(overlay);
-
-            const info = document.createElement('div');
-            info.style.cssText = `position: relative; z-index: 2; display: flex; flex-direction: column; justify-content: center; height: 100%; padding: 6px 10px; padding-right: calc(${deleteZoneWidth} + 10px); color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.8); box-sizing: border-box;`;
-
-            const displayTitle = escapeHtml(movie.title || ('ID ' + movie.id));
-            const displayYear = escapeHtml(movie.year || '');
-            const displayRating = escapeHtml(movie.rating || '');
-            const displayGenres = movie.genres
-                ? escapeHtml(movie.genres.split(', ').slice(0, 4).join(', '))
-                : '';
-
-            info.innerHTML = `
-                <div style="font-weight:600; font-size:12px; line-height:1.3; word-wrap:break-word; overflow-wrap:break-word;">${displayTitle}</div>
-                <div style="font-size:10px; color:#ddd; margin-top:1px;">${displayYear}${displayRating ? ' • КП ' + displayRating : ''}</div>
-                ${displayGenres ? `<div style="font-size:9px; color:#aaa; margin-top:1px; line-height:1.3; word-wrap:break-word; overflow-wrap:break-word;">${displayGenres}</div>` : ''}
-            `;
-            card.appendChild(info);
-
-            const deleteZone = document.createElement('div');
-            deleteZone.setAttribute('title', 'Удалить из закладок');
-            deleteZone.style.cssText = `
-                position: absolute;
-                top: 0; right: 0; bottom: 0;
-                width: ${deleteZoneWidth};
-                background: rgba(220, 38, 38, 0.35);
-                border-radius: 0 20px 20px 0;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                z-index: 4;
-                cursor: pointer;
-                color: #fff;
-                transition: background 0.15s;
-                touch-action: manipulation;
-                -webkit-tap-highlight-color: transparent;
-                user-select: none;
-            `;
-            deleteZone.innerHTML = svgIcon('x', isPhone ? 16 : 12);
-
-            deleteZone.addEventListener('mouseenter', () => {
-                deleteZone.style.background = 'rgba(220, 38, 38, 0.55)';
-            });
-            deleteZone.addEventListener('mouseleave', () => {
-                deleteZone.style.background = 'rgba(220, 38, 38, 0.35)';
-            });
-            deleteZone.addEventListener('click', (e) => {
-                e.stopPropagation();
-                e.preventDefault();
-                removeMovie(movie.id);
-                renderSavedMovies(panel);
-            });
-            deleteZone.addEventListener('touchstart', (e) => {
-                e.stopPropagation();
-                deleteZone.style.background = 'rgba(220, 38, 38, 0.7)';
-            }, { passive: true });
-            deleteZone.addEventListener('touchend', (e) => {
-                e.stopPropagation();
-                e.preventDefault();
-                removeMovie(movie.id);
-                renderSavedMovies(panel);
-            });
-
-            card.appendChild(deleteZone);
-            fragment.appendChild(card);
-        });
-
-        list.appendChild(fragment);
+    function renderSavedMovies() {
+        const panel = document.getElementById('kp-saved-panel');
+        if (panel && panel._renderSavedMovies) panel._renderSavedMovies();
     }
 
     function encodeToUrl(str) {
@@ -3371,76 +2922,51 @@
         return new TextDecoder().decode(bytes);
     }
 
-    function buildShareLink() {
-        const movies = getSavedMovies();
-        const compact = movies.map(m => [String(m.id), m.title || '', m.year || '']);
-        const json = JSON.stringify(compact);
-        const encoded = encodeToUrl(json);
-
-        const baseUrl = location.origin + location.pathname;
-        const sep = location.search ? '&' : '?';
-        return baseUrl + sep + CONFIG.SHARE_QUERY_KEY + '=' + encoded;
-    }
-
     function importFromUrl() {
         let encoded = null;
-
         try {
             const urlParams = new URLSearchParams(location.search);
             encoded = urlParams.get(CONFIG.SHARE_QUERY_KEY);
         } catch (e) {}
-
         if (!encoded) {
             const hash = location.hash;
             const prefix = '#' + CONFIG.SHARE_HASH_PREFIX;
-            if (hash.startsWith(prefix)) {
-                encoded = hash.slice(prefix.length);
-            }
+            if (hash.startsWith(prefix)) encoded = hash.slice(prefix.length);
         }
-
         if (!encoded) return;
 
         try {
             const json = decodeFromUrl(encoded);
-            const compact = JSON.parse(json);
-            if (!Array.isArray(compact)) return;
+            const payload = JSON.parse(json);
 
-            const existing = getSavedMovies();
-            const existingIds = new Set(existing.map(m => String(m.id)));
-            let added = 0;
+            let incomingTabs = [];
+            if (payload && typeof payload === 'object' && Array.isArray(payload.tabs)) {
+                incomingTabs = payload.tabs.map(t => ({
+                    name: String(t.name || CONFIG.DEFAULT_TAB_NAME).slice(0, CONFIG.TAB_NAME_MAX),
+                    movies: Array.isArray(t.movies) ? t.movies : []
+                }));
+            } else if (Array.isArray(payload)) {
+                incomingTabs = [{ name: CONFIG.DEFAULT_TAB_NAME, movies: payload }];
+            } else {
+                return;
+            }
 
-            const baseTime = Date.now();
+            const { totalAdded, tabsCreated } = applyImportedTabs(incomingTabs);
 
-            compact.forEach((item, idx) => {
-                if (!Array.isArray(item) || item.length < 1) return;
-                const id = String(item[0]);
-                const title = item[1] || '';
-                const year = item[2] || '';
-                if (existingIds.has(id)) return;
-
-                existing.push({
-                    id,
-                    title,
-                    year,
-                    posterUrl: CONFIG.POSTER_TEMPLATE.replace('{id}', id),
-                    rating: '',
-                    genres: '',
-                    addedAt: baseTime + idx
-                });
-                added++;
-            });
-
-            if (added > 0) {
-                localStorage.setItem(CONFIG.SAVED_STORAGE_KEY, JSON.stringify(existing));
-                showToast(`Импортировано закладок: ${added}`);
+            if (totalAdded > 0) {
+                showToast(`Импортировано ${totalAdded} закладок${tabsCreated > 0 ? `, создано вкладок: ${tabsCreated}` : ''}`);
                 const panel = document.getElementById('kp-saved-panel');
-                if (panel) renderSavedMovies(panel);
+                if (panel && panel._renderTabs) {
+                    panel._renderTabs();
+                    panel._renderSavedMovies();
+                }
             } else {
                 showToast('Новых закладок не найдено');
             }
 
             history.replaceState(null, '', location.pathname);
         } catch (e) {
+            console.error('Import error:', e);
             showToast('Не удалось импортировать закладки');
         }
     }
@@ -3448,24 +2974,19 @@
     function enrichBookmarkFromPage() {
         const isKP = host === 'www.kinopoisk.ru' || host === 'kinopoisk.ru';
         if (!isKP) return;
-
         const id = extractKpId();
         if (!id) return;
-
         const movies = getSavedMovies();
         const idx = movies.findIndex(m => String(m.id) === id);
         if (idx === -1) return;
-
         let attempts = 0;
         const maxAttempts = 30;
-
         const tryEnrich = () => {
             const fresh = getCurrentMovieData();
             if (!fresh || !fresh.title || fresh.title === 'Без названия') {
                 if (++attempts < maxAttempts) setTimeout(tryEnrich, 500);
                 return;
             }
-
             const existing = movies[idx];
             const enriched = {
                 ...existing,
@@ -3475,24 +2996,47 @@
                 rating: existing.rating || fresh.rating,
                 genres: existing.genres || fresh.genres
             };
-
             if (JSON.stringify(enriched) !== JSON.stringify(existing)) {
                 movies[idx] = enriched;
-                localStorage.setItem(CONFIG.SAVED_STORAGE_KEY, JSON.stringify(movies));
+                setSavedMovies(movies);
                 const panel = document.getElementById('kp-saved-panel');
-                if (panel && panel.style.display === 'flex') renderSavedMovies(panel);
+                if (panel && panel.style.display === 'flex' && panel._renderSavedMovies) panel._renderSavedMovies();
             }
         };
         setTimeout(tryEnrich, 1500);
     }
 
+    // ============================================================
+    // Экспорт в файл — {version, tabs:[{name, movies:[...]}]}
+    // ============================================================
     function exportToFile() {
         const movies = getSavedMovies();
         if (movies.length === 0) {
             showToast('Нет закладок для экспорта');
             return;
         }
-        const data = JSON.stringify(movies, null, 2);
+        const payload = {
+            version: 1,
+            exportedAt: Date.now(),
+            tabs: tabs
+                .map(t => ({
+                    name: t.name,
+                    sort: t.sort,
+                    movies: movies
+                        .filter(m => m.tabId === t.id)
+                        .map(m => ({
+                            id: String(m.id),
+                            title: m.title || '',
+                            year: m.year || '',
+                            posterUrl: m.posterUrl || '',
+                            rating: m.rating || '',
+                            genres: m.genres || '',
+                            addedAt: m.addedAt || 0
+                        }))
+                }))
+                .filter(t => t.movies.length > 0)
+        };
+        const data = JSON.stringify(payload, null, 2);
         const blob = new Blob([data], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -3521,33 +3065,36 @@
                 reader.onload = (e) => {
                     try {
                         const data = JSON.parse(e.target.result);
-                        if (!Array.isArray(data)) throw new Error('bad format');
+                        let incomingTabs = [];
 
-                        const existing = getSavedMovies();
-                        const existingIds = new Set(existing.map(m => String(m.id)));
-                        let added = 0;
-                        const baseTime = Date.now();
-
-                        data.forEach((item, idx) => {
-                            const id = String(item.id || '');
-                            if (!id || existingIds.has(id)) return;
-                            existing.push({
-                                id,
-                                title: item.title || '',
-                                year: item.year || '',
-                                posterUrl: item.posterUrl || CONFIG.POSTER_TEMPLATE.replace('{id}', id),
-                                rating: item.rating || '',
-                                genres: item.genres || '',
-                                addedAt: item.addedAt || (baseTime + idx)
+                        if (data && typeof data === 'object' && Array.isArray(data.tabs)) {
+                            incomingTabs = data.tabs.map(t => ({
+                                name: String(t.name || CONFIG.DEFAULT_TAB_NAME).slice(0, CONFIG.TAB_NAME_MAX),
+                                movies: Array.isArray(t.movies) ? t.movies : []
+                            }));
+                        } else if (Array.isArray(data)) {
+                            const nameToMovies = new Map();
+                            data.forEach(m => {
+                                if (!m || typeof m !== 'object') return;
+                                const existingTab = tabs.find(t => t.id === m.tabId);
+                                const name = existingTab ? existingTab.name : CONFIG.DEFAULT_TAB_NAME;
+                                if (!nameToMovies.has(name)) nameToMovies.set(name, []);
+                                nameToMovies.get(name).push(m);
                             });
-                            added++;
-                        });
+                            incomingTabs = Array.from(nameToMovies.entries()).map(([name, movies]) => ({ name, movies }));
+                        } else {
+                            throw new Error('bad format');
+                        }
 
-                        if (added > 0) {
-                            localStorage.setItem(CONFIG.SAVED_STORAGE_KEY, JSON.stringify(existing));
-                            showToast(`Импортировано закладок: ${added}`);
+                        const { totalAdded, tabsCreated } = applyImportedTabs(incomingTabs);
+
+                        if (totalAdded > 0) {
+                            showToast(`Импортировано ${totalAdded} закладок${tabsCreated > 0 ? `, создано вкладок: ${tabsCreated}` : ''}`);
                             const panel = document.getElementById('kp-saved-panel');
-                            if (panel) renderSavedMovies(panel);
+                            if (panel && panel._renderTabs) {
+                                panel._renderTabs();
+                                panel._renderSavedMovies();
+                            }
                         } else {
                             showToast('Новых закладок не найдено');
                         }
@@ -3564,42 +3111,18 @@
         });
     }
 
-    function renderQRButton(container, text) {
-        container.innerHTML = '';
-
-        const btn = document.createElement('button');
-        btn.innerHTML = svgIcon('qr', 14) + '<span>Показать QR-код</span>';
-        btn.style.cssText = 'padding: 8px 16px; border: none; border-radius: 8px; background: #427552; color: #fff; font-weight: 600; cursor: pointer; font-size: 12px; font-family: inherit; transition: opacity 0.2s; touch-action: manipulation; -webkit-tap-highlight-color: transparent; display: inline-flex; align-items: center; justify-content: center; gap: 5px;';
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const url = CONFIG.QR_SERVICE_URL + '?size=300x300&margin=10&data=' + encodeURIComponent(text);
-            window.open(url, '_blank', 'noopener');
-        });
-        container.appendChild(btn);
-    }
-
-    function startKinopoiskUI() {
-        waitForThemeAndCreateUI();
-    }
+    function startKinopoiskUI() { waitForThemeAndCreateUI(); }
 
     function waitForThemeAndCreateUI() {
         if (themeWaitActive) return;
         themeWaitActive = true;
-
         const startTime = Date.now();
         const maxWait = 3000;
-
         function check() {
             const btn = document.querySelector('button[class*="style_buttonLight__"], button[class*="style_buttonDark__"]');
-            if (btn && btn.offsetParent !== null) {
-                themeWaitActive = false;
-                createUI();
-            } else if (Date.now() - startTime > maxWait) {
-                themeWaitActive = false;
-                createUI();
-            } else {
-                requestAnimationFrame(check);
-            }
+            if (btn && btn.offsetParent !== null) { themeWaitActive = false; createUI(); }
+            else if (Date.now() - startTime > maxWait) { themeWaitActive = false; createUI(); }
+            else requestAnimationFrame(check);
         }
         check();
     }
@@ -3609,28 +3132,16 @@
         if (window.location.href !== lastUrl) {
             lastUrl = window.location.href;
             currentUIUrl = null;
-
             invalidateThemeCache();
             _movieDataCache = { id: null, data: null, ts: 0 };
-
-            if (isRebuildMirror && !isBlockedPage) {
-                waitForRebuild();
-            } else if (isMirrorDomain() && !isBlockedPage) {
-                if (isHabster) {
-                    showBody();
-                }
-            } else if (!isBlockedPage) {
-                themeWaitActive = false;
-                waitForThemeAndCreateUI();
-            }
+            if (isRebuildMirror && !isBlockedPage) waitForRebuild();
+            else if (isMirrorDomain() && !isBlockedPage) { if (isHabster) showBody(); }
+            else if (!isBlockedPage) { themeWaitActive = false; waitForThemeAndCreateUI(); }
         }
     }
 
     if (!isBlockedPage && !isMirrorDomain()) {
-        whenReady(() => {
-            importFromUrl();
-            enrichBookmarkFromPage();
-        });
+        whenReady(() => { importFromUrl(); enrichBookmarkFromPage(); });
     }
 
     const origPushState = history.pushState;
@@ -3644,18 +3155,10 @@
     if (titleElement) titleObserver.observe(titleElement, { childList: true });
 
     if (!isBlockedPage) {
-        if (isRebuildMirror) {
-            waitForRebuild();
-        } else if (isMirrorDomain()) {
-            if (isHabster) {
-                showBody();
-            }
-        } else {
-            startKinopoiskUI();
-        }
+        if (isRebuildMirror) waitForRebuild();
+        else if (isMirrorDomain()) { if (isHabster) showBody(); }
+        else startKinopoiskUI();
     }
 
-    if (!isBlockedPage) {
-        bootstrapUpdateCheck();
-    }
+    if (!isBlockedPage) bootstrapUpdateCheck();
 })();
