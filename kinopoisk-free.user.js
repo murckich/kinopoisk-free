@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kinopoisk-free
 // @namespace    http://tampermonkey.net/
-// @version      7.5.3
+// @version      7.5.4
 // @description  Бесплатный просмотр фильмом и сериалов на сайте kinopoisk.ru
 // @author       Murckich
 // @icon         https://www.kinopoisk.ru/favicon.ico
@@ -60,8 +60,8 @@
     'use strict';
 
     const LOCAL_META = {
-        version: '7.5.3',
-        date: '12.09.2026'
+        version: '7.5.4',
+        date: '13.09.2026'
     };
 
     const CONFIG = {
@@ -80,14 +80,15 @@
         PHONE_BTN_SIZE: 48,
         PHONE_SETTINGS_BTN_SIZE: 42,
         POSITIONS: {
-            'left-top':      { left: true,  vertical: 'top',    arrow: '🢄', phoneArrow: '↖' },
-            'left-middle':   { left: true,  vertical: 'middle', arrow: '🢀', phoneArrow: '←' },
-            'left-bottom':   { left: true,  vertical: 'bottom', arrow: '🢇', phoneArrow: '↙' },
-            'right-top':     { left: false, vertical: 'top',    arrow: '🢅', phoneArrow: '↗' },
-            'right-middle':  { left: false, vertical: 'middle', arrow: '🢂', phoneArrow: '→' },
-            'right-bottom':  { left: false, vertical: 'bottom', arrow: '🢆', phoneArrow: '↘' }
+            'left-top':      { left: true,  vertical: 'top' },
+            'left-middle':   { left: true,  vertical: 'middle' },
+            'left-bottom':   { left: true,  vertical: 'bottom' },
+            'right-top':     { left: false, vertical: 'top' },
+            'right-middle':  { left: false, vertical: 'middle' },
+            'right-bottom':  { left: false, vertical: 'bottom' }
         },
-        PHONE_POSITIONS: ['left-middle', 'left-bottom', 'right-middle', 'right-bottom'],
+        PHONE_POSITIONS: ['left-middle', 'right-middle', 'left-bottom', 'right-bottom'],
+        DESKTOP_POSITIONS: ['left-top', 'left-middle', 'right-top', 'left-bottom', 'right-middle', 'right-bottom'],
         EMBED_SELECTOR: '.styles_buttonsContainer__DCKJk',
         FALLBACK_SELECTORS: [
             '[data-test-id="ContentActions"]',
@@ -109,9 +110,7 @@
             FIXED_TOP_HOVER_BG: '#e5e5e5',
             FIXED_TOP_HOVER_COLOR: '#1a1a1a',
             FIXED_MID_BOTTOM_IDLE_BG: '#f2f2f2',
-            FIXED_MID_BOTTOM_COLOR: '#1a1a1a',
-            FIXED_SETTINGS_COLOR_TOP: '#f0f0f5',
-            FIXED_SETTINGS_COLOR_MID_BOT: '#1a1a1a',
+            FIXED_MID_BOTTOM_COLOR: '#1a1a1a'
         },
         DARK: {
             EMBED_MAIN_COLOR: '#ffffff',
@@ -124,9 +123,7 @@
             FIXED_TOP_HOVER_BG: '#ffffff',
             FIXED_TOP_HOVER_COLOR: '#000000',
             FIXED_MID_BOTTOM_IDLE_BG: '#1d1d1d',
-            FIXED_MID_BOTTOM_COLOR: '#ffffff',
-            FIXED_SETTINGS_COLOR_TOP: '#ffffff',
-            FIXED_SETTINGS_COLOR_MID_BOT: '#ffffff',
+            FIXED_MID_BOTTOM_COLOR: '#ffffff'
         },
         PANEL_BG_LIGHT: '#f5f5f5',
         PANEL_BG_DARK: '#1f1f1f',
@@ -135,8 +132,8 @@
         PANEL_RADIUS: '20px',
         PANEL_PADDING: '6px 8px',
         PANEL_GAP: '6px',
-        PANEL_OFFSET_X: 8,
         PANEL_MIN_WIDTH: '160px',
+        PHONE_PANEL_WIDTH: '200px',
         PANEL_FONT_SIZE: '13px',
         PHONE_PANEL_FONT_SIZE: '14px',
         EMBED_TIMEOUT: 5000,
@@ -168,9 +165,7 @@
         MOVIE_DATA_CACHE_TTL: 30000,
         CHANGELOG_MAX: 1000,
         COMMIT_CARD_HEIGHT_DESKTOP: '120px',
-        COMMIT_CARD_HEIGHT_PHONE: '100px',
-        UPDATE_ICON_SIZE_DESKTOP: '17px',
-        UPDATE_ICON_SIZE_PHONE: '22px'
+        COMMIT_CARD_HEIGHT_PHONE: '100px'
     };
 
     const isTouchDevice = (() => {
@@ -185,7 +180,6 @@
         (window.screen && window.screen.height) || 0
     );
     const isPhone = isTouchDevice && screenMin > 0 && screenMin <= 600;
-    const isTablet = isTouchDevice && !isPhone;
 
     let _darkThemeCache = { value: null, ts: 0 };
     let _movieDataCache = { id: null, data: null, ts: 0 };
@@ -216,7 +210,7 @@
     }
 
     function isDarkTheme() {
-        if (isPhone) return true;
+        if (isPhone) return (settings.phoneTheme || 'dark') === 'dark';
 
         const now = Date.now();
         if (_darkThemeCache.value !== null && (now - _darkThemeCache.ts) < CONFIG.THEME_CACHE_TTL) {
@@ -258,6 +252,85 @@
 
     function getPanelFontSize() {
         return isPhone ? CONFIG.PHONE_PANEL_FONT_SIZE : CONFIG.PANEL_FONT_SIZE;
+    }
+
+    // ============================================================
+    // Применение темы "на месте" без пересборки UI.
+    // Используется при переключении темы на телефоне,
+    // чтобы не закрывать панель настроек.
+    // ============================================================
+    function applyThemeInPlace() {
+        const colors = getThemeColors();
+        const bgColor = getPanelBackground();
+        const textColor = getPanelTextColor();
+
+        // Главная кнопка ▶
+        const mainBtn = document.getElementById('kp-redirect-btn');
+        if (mainBtn) {
+            const isTop = settings.btnVertical === 'top';
+            let mainIdleBg, mainColor, mainHoverBg, mainHoverColor;
+            if (isTop) {
+                mainIdleBg = colors.FIXED_TOP_IDLE_BG;
+                mainColor = colors.FIXED_TOP_COLOR;
+                mainHoverBg = colors.FIXED_TOP_HOVER_BG;
+                mainHoverColor = colors.FIXED_TOP_HOVER_COLOR;
+            } else {
+                mainIdleBg = colors.FIXED_MID_BOTTOM_IDLE_BG;
+                mainColor = colors.FIXED_MID_BOTTOM_COLOR;
+                mainHoverBg = colors.HOVER_BG;
+                mainHoverColor = colors.HOVER_TEXT_COLOR;
+            }
+            mainBtn._idleBg = mainIdleBg;
+            mainBtn._baseColor = mainColor;
+            mainBtn._hoverBg = mainHoverBg;
+            mainBtn._hoverTextColor = mainHoverColor;
+            mainBtn.style.background = mainIdleBg;
+            mainBtn.style.color = mainColor;
+        }
+
+        // Кнопки ⚙️ и 📑
+        const settingsBtn = document.getElementById('kp-settings-btn');
+        const saveBtn = document.getElementById('kp-save-btn');
+        [settingsBtn, saveBtn].forEach(btn => {
+            if (!btn) return;
+            btn._idleBg = colors.EMBED_IDLE_BG;
+            btn._baseColor = colors.EMBED_SETTINGS_COLOR;
+            btn._hoverBg = colors.HOVER_BG;
+            btn._hoverTextColor = colors.HOVER_TEXT_COLOR;
+            btn.style.background = colors.EMBED_IDLE_BG;
+            btn.style.color = colors.EMBED_SETTINGS_COLOR;
+        });
+
+        // Панель настроек
+        const panel = document.getElementById('kp-settings-panel');
+        if (panel) {
+            panel.style.background = bgColor;
+            panel.style.color = textColor;
+
+            panel.querySelectorAll('.kp-icon-btn').forEach(btn => {
+                btn.style.color = textColor;
+            });
+            panel.querySelectorAll('a[href="' + CONFIG.GITHUB_URL + '"]').forEach(a => {
+                a.style.color = textColor;
+            });
+
+            const channelMenu = panel.querySelector('#kp-channel-dd-menu');
+            if (channelMenu) channelMenu.style.background = bgColor;
+            const posMenu = panel.querySelector('#kp-pos-dd-menu');
+            if (posMenu) posMenu.style.background = bgColor;
+
+            const updateView = panel.querySelector('#kp-update-view');
+            if (updateView && updateView.style.display !== 'none') {
+                renderUpdateView(_updateState);
+            }
+        }
+
+        // Панель закладок
+        const savedPanel = document.getElementById('kp-saved-panel');
+        if (savedPanel) {
+            savedPanel.style.background = bgColor;
+            savedPanel.style.color = textColor;
+        }
     }
 
     function matchChannelDomain(hostname) {
@@ -633,7 +706,6 @@
             background: none;
             border: none;
             color: inherit;
-            font-size: 15px;
             line-height: 1;
             padding: 2px 4px;
             cursor: pointer;
@@ -651,6 +723,7 @@
             touch-action: manipulation;
             -webkit-tap-highlight-color: transparent;
         }
+        .kp-icon-btn svg { display: block; }
         .kp-icon-btn:hover {
             opacity: 1;
             transform: scale(1.15);
@@ -680,22 +753,275 @@
             0%, 100% { transform: scale(1); opacity: 1; }
             50%      { transform: scale(1.25); opacity: 0.7; }
         }
+        @keyframes kp-icon-pulse {
+            0%, 100% { transform: scale(1); }
+            50%      { transform: scale(1.15); }
+        }
+        #kp-update-open-btn.kp-has-update svg {
+            animation: kp-icon-pulse 1.8s ease-in-out infinite;
+            transform-origin: center;
+            transform-box: fill-box;
+        }
+
+        /* ===== Тумблер темы (телефон) ===== */
+        .kp-theme-toggle {
+            background: none;
+            border: none;
+            padding: 0;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            outline: none;
+        }
+        .kp-theme-toggle-track {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 44px;
+            height: 24px;
+            border-radius: 12px;
+            background: rgba(127,127,127,0.25);
+            padding: 2px;
+            box-sizing: border-box;
+            transition: background 0.25s ease;
+        }
+        .kp-theme-toggle-thumb {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #fff;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.35);
+            transition: transform 0.25s ease;
+            z-index: 2;
+        }
+        .kp-theme-toggle[data-theme="light"] .kp-theme-toggle-thumb {
+            transform: translateX(20px);
+        }
+        .kp-theme-toggle[data-theme="dark"] .kp-theme-toggle-thumb {
+            transform: translateX(0);
+        }
+        .kp-theme-toggle-icon {
+            position: relative;
+            z-index: 1;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 20px;
+            height: 20px;
+            color: rgba(127,127,127,0.85);
+            transition: color 0.25s ease;
+        }
+        .kp-theme-toggle[data-theme="dark"] .kp-theme-icon-moon {
+            color: #fbbf24;
+        }
+        .kp-theme-toggle[data-theme="light"] .kp-theme-icon-sun {
+            color: #f59e0b;
+        }
+
+        /* ===== Тумблер "Встроить" ===== */
+        .kp-embed-toggle {
+            background: none;
+            border: none;
+            padding: 0;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            outline: none;
+        }
+        .kp-embed-toggle-track {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 24px;
+            border-radius: 12px;
+            background: rgba(127,127,127,0.25);
+            transition: background 0.25s ease;
+        }
+        .kp-embed-toggle[data-state="on"] .kp-embed-toggle-track {
+            background: #427552;
+        }
+        .kp-embed-toggle-thumb {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #fff;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.35);
+            transition: transform 0.25s ease;
+        }
+        .kp-embed-toggle[data-state="on"] .kp-embed-toggle-thumb {
+            transform: translateX(20px);
+        }
+
+        /* ===== Кастомный дропдаун каналов ===== */
+        .kp-dd-channel {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .kp-dd-channel-trigger {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            background: rgba(127,127,127,0.12);
+            border: 1px solid rgba(127,127,127,0.25);
+            border-radius: 20px;
+            color: inherit;
+            transition: border-color 0.15s, background 0.15s;
+            font-size: inherit;
+        }
+        .kp-dd-channel:hover .kp-dd-channel-trigger {
+            border-color: rgba(99,102,241,0.5);
+        }
+        .kp-dd-channel.open .kp-dd-channel-trigger {
+            border-color: #818cf8;
+            background: rgba(99,102,241,0.1);
+        }
+        .kp-dd-channel-chev {
+            opacity: 0.55;
+            transition: transform 0.2s;
+            display: block;
+        }
+        .kp-dd-channel.open .kp-dd-channel-chev { transform: rotate(180deg); }
+        .kp-dd-channel-menu {
+            position: absolute;
+            top: calc(100% + 4px);
+            right: 0;
+            border-radius: 12px;
+            padding: 4px;
+            display: none;
+            z-index: 100;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+            border: 1px solid rgba(127,127,127,0.25);
+            min-width: 100%;
+            white-space: nowrap;
+        }
+        .kp-dd-channel.open .kp-dd-channel-menu { display: block; }
+        .kp-dd-channel-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            color: inherit;
+            font-size: inherit;
+            transition: background 0.12s, color 0.12s;
+        }
+        .kp-dd-channel-item:hover {
+            background: rgba(127,127,127,0.15);
+        }
+        .kp-dd-channel-item.active {
+            background: rgba(99,102,241,0.15);
+            color: #818cf8;
+        }
+
+        /* ===== Кастомный дропдаун позиции ===== */
+        .kp-dd-pos {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .kp-dd-pos-trigger {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            background: rgba(127,127,127,0.12);
+            border: 1px solid rgba(127,127,127,0.25);
+            border-radius: 20px;
+            color: inherit;
+            transition: border-color 0.15s, background 0.15s;
+            font-size: inherit;
+        }
+        .kp-dd-pos:hover .kp-dd-pos-trigger {
+            border-color: rgba(99,102,241,0.5);
+        }
+        .kp-dd-pos.open .kp-dd-pos-trigger {
+            border-color: #818cf8;
+            background: rgba(99,102,241,0.1);
+        }
+        .kp-dd-pos-chev {
+            opacity: 0.55;
+            transition: transform 0.2s;
+            display: block;
+        }
+        .kp-dd-pos.open .kp-dd-pos-chev { transform: rotate(180deg); }
+        .kp-dd-pos-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .kp-dd-pos-icon svg { display: block; }
+        .kp-dd-pos-menu {
+            position: absolute;
+            top: calc(100% + 4px);
+            right: 0;
+            border-radius: 12px;
+            padding: 4px;
+            display: none;
+            z-index: 100;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+            border: 1px solid rgba(127,127,127,0.25);
+            gap: 2px;
+        }
+        .kp-dd-pos.open .kp-dd-pos-menu {
+            display: grid;
+        }
+        .kp-dd-pos-item {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 34px;
+            height: 34px;
+            border-radius: 8px;
+            cursor: pointer;
+            color: inherit;
+            opacity: 0.55;
+            transition: background 0.12s, opacity 0.12s, color 0.12s;
+        }
+        .kp-dd-pos-item:hover {
+            background: rgba(127,127,127,0.15);
+            opacity: 1;
+        }
+        .kp-dd-pos-item.active {
+            background: rgba(99,102,241,0.15);
+            color: #818cf8;
+            opacity: 1;
+        }
+        .kp-dd-pos-item svg { display: block; }
 
         .kp-update-icon {
-            text-align: center;
-            font-size: 26px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             line-height: 1;
             color: #818cf8;
             margin: 2px 0 0;
             transition: color 0.3s;
-            display: block;
         }
+        .kp-update-icon svg { display: block; }
         .kp-update-icon.ok  { color: #6ee7a7; }
         .kp-update-icon.new { color: #fbbf24; }
         .kp-update-icon.err { color: #ff8888; }
         .kp-update-icon.spin {
-            display: inline-block;
-            width: 100%;
             animation: kp-rotate 1.2s linear infinite;
         }
         @keyframes kp-rotate {
@@ -810,7 +1136,6 @@
     let currentUIUrl = null;
     let embedObserver = null;
     let embedTimeout = null;
-    let embedRestoreTimeout = null;
     let isCreatingUI = false;
     let themeWaitActive = false;
 
@@ -882,6 +1207,61 @@
             if (va > vb) return 1;
         }
         return 0;
+    }
+
+    // ============================================================
+    // SVG-иконки (Lucide).
+    // ============================================================
+    function svgIcon(name, size) {
+        const s = size || 20;
+        const sw = s <= 14 ? 2.4 : s <= 18 ? 2.2 : 2;
+        const head = `width="${s}" height="${s}" viewBox="0 0 24 24" style="display:block" aria-hidden="true"`;
+        const icons = {
+            play: `<svg ${head} fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"/></svg>`,
+            settings: `<svg ${head} fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>`,
+            bookmark: `<svg ${head} fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>`,
+            share: `<svg ${head} fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`,
+            mapPin: `<svg ${head} fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="3"/></svg>`,
+            copy: `<svg ${head} fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`,
+            download: `<svg ${head} fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`,
+            upload: `<svg ${head} fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>`,
+            qr: `<svg ${head} fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>`,
+            refresh: `<svg ${head} fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`,
+            arrowLeft: `<svg ${head} fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>`,
+            arrowRight: `<svg ${head} fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>`,
+            arrowLeftTop: `<svg ${head} fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><line x1="17" y1="17" x2="7" y2="7"/><polyline points="7 17 7 7 17 7"/></svg>`,
+            arrowLeftBottom: `<svg ${head} fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><line x1="17" y1="7" x2="7" y2="17"/><polyline points="7 7 7 17 17 17"/></svg>`,
+            arrowRightTop: `<svg ${head} fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>`,
+            arrowRightBottom: `<svg ${head} fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="7" x2="17" y2="17"/><polyline points="7 17 17 17 17 7"/></svg>`,
+            check: `<svg ${head} fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
+            arrowUp: `<svg ${head} fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>`,
+            alert: `<svg ${head} fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
+            x: `<svg ${head} fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`,
+            sun: `<svg ${head} fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>`,
+            moon: `<svg ${head} fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`,
+            chevronDown: `<svg ${head} fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`
+        };
+        return icons[name] || '';
+    }
+
+    function posToIconName(key) {
+        const map = {
+            'left-top': 'arrowLeftTop',
+            'left-middle': 'arrowLeft',
+            'left-bottom': 'arrowLeftBottom',
+            'right-top': 'arrowRightTop',
+            'right-middle': 'arrowRight',
+            'right-bottom': 'arrowRightBottom'
+        };
+        return map[key] || 'arrowLeft';
+    }
+
+    function iconSizeFor(btnSize) {
+        if (btnSize >= 52) return 24;
+        if (btnSize >= 48) return 22;
+        if (btnSize >= 42) return 20;
+        if (btnSize >= 36) return 18;
+        return 16;
     }
 
     function saveUpdateCache(result, state) {
@@ -995,6 +1375,16 @@
         if (openSelect && !openSelect.contains(e.target)) {
             openSelect.classList.remove('open');
         }
+
+        const openPosDd = document.querySelector('.kp-dd-pos.open');
+        if (openPosDd && !openPosDd.contains(e.target)) {
+            openPosDd.classList.remove('open');
+        }
+
+        const openChDd = document.querySelector('.kp-dd-channel.open');
+        if (openChDd && !openChDd.contains(e.target)) {
+            openChDd.classList.remove('open');
+        }
     }, true);
 
     function loadSettings() {
@@ -1006,6 +1396,7 @@
                 let btnPosition = parsed.btnPosition || 'left';
                 let btnVertical = parsed.btnVertical || 'middle';
                 let embedMode = 'embedMode' in parsed ? parsed.embedMode : true;
+                let phoneTheme = parsed.phoneTheme || 'dark';
 
                 if (isPhone) {
                     embedMode = false;
@@ -1014,14 +1405,15 @@
                     }
                 }
 
-                return { targetDomain, btnPosition, btnVertical, embedMode };
+                return { targetDomain, btnPosition, btnVertical, embedMode, phoneTheme };
             }
         } catch (e) {}
         return {
             targetDomain: CONFIG.DEFAULT_DOMAIN,
             btnPosition: 'left',
             btnVertical: 'middle',
-            embedMode: !isPhone
+            embedMode: !isPhone,
+            phoneTheme: 'dark'
         };
     }
 
@@ -1411,7 +1803,6 @@
     function stopEmbedTimers() {
         if (embedObserver) { embedObserver.disconnect(); embedObserver = null; }
         if (embedTimeout) { clearTimeout(embedTimeout); embedTimeout = null; }
-        if (embedRestoreTimeout) { clearTimeout(embedRestoreTimeout); embedRestoreTimeout = null; }
     }
 
     function findEmbedTarget() {
@@ -1492,8 +1883,9 @@
             if (debounceTimer) return;
             debounceTimer = setTimeout(() => {
                 debounceTimer = null;
+                if (document.querySelector('.kp-redirect-embed-group')) return;
                 const target = findEmbedTarget();
-                if (target && isContainerReady(target) && !document.querySelector('.kp-redirect-embed-group')) {
+                if (target && isContainerReady(target)) {
                     buildEmbeddedUI(target);
                 }
             }, 100);
@@ -1646,15 +2038,21 @@
         group.style.cssText = `display: inline-flex; align-items: center; gap: ${CONFIG.BUTTONS_GAP}; user-select: none;`;
 
         const colors = getThemeColors();
-        const mainBtn = createButton('▶', null, CONFIG.BTN_SIZE,
-            colors.EMBED_MAIN_COLOR, colors.EMBED_IDLE_BG, colors.HOVER_BG, colors.HOVER_TEXT_COLOR);
+        const mainBtn = createButton(
+            svgIcon('play', iconSizeFor(CONFIG.BTN_SIZE)),
+            null, CONFIG.BTN_SIZE,
+            colors.EMBED_MAIN_COLOR, colors.EMBED_IDLE_BG, colors.HOVER_BG, colors.HOVER_TEXT_COLOR
+        );
         mainBtn.title = `${getChannelName(settings.targetDomain)} канал`;
         mainBtn.addEventListener('click', redirectToChannel);
 
         const settingsWrapper = document.createElement('div');
         settingsWrapper.style.cssText = 'position: relative; display: inline-flex; align-items: center;';
-        const settingsBtn = createButton('⚙️', 'kp-settings-btn', CONFIG.SETTINGS_BTN_SIZE,
-            colors.EMBED_SETTINGS_COLOR, colors.EMBED_IDLE_BG, colors.HOVER_BG, colors.HOVER_TEXT_COLOR);
+        const settingsBtn = createButton(
+            svgIcon('settings', iconSizeFor(CONFIG.SETTINGS_BTN_SIZE)),
+            'kp-settings-btn', CONFIG.SETTINGS_BTN_SIZE,
+            colors.EMBED_SETTINGS_COLOR, colors.EMBED_IDLE_BG, colors.HOVER_BG, colors.HOVER_TEXT_COLOR
+        );
         settingsBtn.title = 'Настройки';
         const settingsPanel = createSettingsPanel();
         settingsPanel.style.position = 'absolute';
@@ -1666,8 +2064,11 @@
 
         const savedWrapper = document.createElement('div');
         savedWrapper.style.cssText = 'position: relative; display: inline-flex; align-items: center;';
-        const saveBtn = createButton('📑', 'kp-save-btn', CONFIG.SETTINGS_BTN_SIZE,
-            colors.EMBED_SETTINGS_COLOR, colors.EMBED_IDLE_BG, colors.HOVER_BG, colors.HOVER_TEXT_COLOR);
+        const saveBtn = createButton(
+            svgIcon('bookmark', iconSizeFor(CONFIG.SETTINGS_BTN_SIZE)),
+            'kp-save-btn', CONFIG.SETTINGS_BTN_SIZE,
+            colors.EMBED_SETTINGS_COLOR, colors.EMBED_IDLE_BG, colors.HOVER_BG, colors.HOVER_TEXT_COLOR
+        );
         saveBtn.title = 'Закладки';
         const savedPanel = createSavedPanel();
         savedPanel.style.position = 'absolute';
@@ -1730,7 +2131,11 @@
         const mainSize = isPhone ? CONFIG.PHONE_BTN_SIZE : CONFIG.BTN_SIZE;
         const settingsSize = isPhone ? CONFIG.PHONE_SETTINGS_BTN_SIZE : CONFIG.SETTINGS_BTN_SIZE;
 
-        const mainBtn = createButton('▶', 'kp-redirect-btn', mainSize, mainColor, mainIdleBg, mainHoverBg, mainHoverColor);
+        const mainBtn = createButton(
+            svgIcon('play', iconSizeFor(mainSize)),
+            'kp-redirect-btn', mainSize,
+            mainColor, mainIdleBg, mainHoverBg, mainHoverColor
+        );
         mainBtn.title = `${getChannelName(settings.targetDomain)} канал`;
         mainBtn.addEventListener('click', redirectToChannel);
 
@@ -1741,8 +2146,11 @@
 
         const settingsWrapper = document.createElement('div');
         settingsWrapper.style.cssText = 'position: relative; display: inline-flex; align-items: center;';
-        const settingsBtn = createButton('⚙️', 'kp-settings-btn', settingsSize,
-            secondaryColor, secondaryIdleBg, secondaryHoverBg, secondaryHoverColor);
+        const settingsBtn = createButton(
+            svgIcon('settings', iconSizeFor(settingsSize)),
+            'kp-settings-btn', settingsSize,
+            secondaryColor, secondaryIdleBg, secondaryHoverBg, secondaryHoverColor
+        );
         settingsBtn.title = 'Настройки';
         const settingsPanel = createSettingsPanel();
         settingsPanel.style.position = 'absolute';
@@ -1750,8 +2158,11 @@
 
         const savedWrapper = document.createElement('div');
         savedWrapper.style.cssText = 'position: relative; display: inline-flex; align-items: center;';
-        const saveBtn = createButton('📑', 'kp-save-btn', settingsSize,
-            secondaryColor, secondaryIdleBg, secondaryHoverBg, secondaryHoverColor);
+        const saveBtn = createButton(
+            svgIcon('bookmark', iconSizeFor(settingsSize)),
+            'kp-save-btn', settingsSize,
+            secondaryColor, secondaryIdleBg, secondaryHoverBg, secondaryHoverColor
+        );
         saveBtn.title = 'Закладки';
         const savedPanel = createSavedPanel();
         savedPanel.style.position = 'absolute';
@@ -1810,10 +2221,17 @@
         }
     }
 
-    function createButton(text, id, size, color, idleBg, hoverBg, hoverTextColor) {
+    function createButton(content, id, size, color, idleBg, hoverBg, hoverTextColor) {
         const btn = document.createElement('div');
         if (id) btn.id = id;
-        btn.textContent = text;
+
+        const isSvg = typeof content === 'string' && content.trim().startsWith('<svg');
+        if (isSvg) {
+            btn.innerHTML = content;
+        } else {
+            btn.textContent = content;
+        }
+
         btn._baseColor = color;
         btn._idleBg = idleBg;
         btn._hoverBg = hoverBg;
@@ -1821,7 +2239,8 @@
         Object.assign(btn.style, {
             width: `${size}px`, height: `${size}px`, borderRadius: '50%',
             background: idleBg, border: 'none', boxShadow: 'none',
-            color: color, fontSize: `${size * 0.45}px`, lineHeight: `${size}px`,
+            color: color, fontSize: `${size * 0.45}px`,
+            lineHeight: isSvg ? '0' : `${size}px`,
             textAlign: 'center', cursor: 'pointer',
             transition: 'background 0.2s, transform 0.2s, color 0.2s',
             fontFamily: 'Segoe UI, Arial, sans-serif',
@@ -1845,8 +2264,9 @@
 
     function setPanelUpdateWidth(panel, wide) {
         if (!panel) return;
+        const baseMin = isPhone ? CONFIG.PHONE_PANEL_WIDTH : CONFIG.PANEL_MIN_WIDTH;
         panel.style.width = wide ? CONFIG.SAVED_PANEL_WIDTH : 'auto';
-        panel.style.minWidth = wide ? CONFIG.SAVED_PANEL_WIDTH : CONFIG.PANEL_MIN_WIDTH;
+        panel.style.minWidth = wide ? CONFIG.SAVED_PANEL_WIDTH : baseMin;
     }
 
     function showSettingsView() {
@@ -1863,7 +2283,6 @@
         const panel = document.getElementById('kp-settings-panel');
         if (!panel) return;
 
-        // Сброс «Все актуально» / «Ошибка» в «Ожидание», если данные устарели.
         if ((_updateState === 'ok' || _updateState === 'error') &&
             _lastCheckTs && (Date.now() - _lastCheckTs) > CONFIG.STALE_UI_THRESHOLD) {
             _updateState = 'idle';
@@ -1890,7 +2309,7 @@
         if (!icon || !title || !versions || !actions) return;
 
         icon.className = 'kp-update-icon';
-        icon.textContent = '↻';
+        icon.innerHTML = svgIcon('refresh', 22);
         title.className = 'kp-update-title';
         if (commitCard) commitCard.classList.remove('visible');
 
@@ -1915,7 +2334,7 @@
 
         if (state === 'ok') {
             icon.classList.add('ok');
-            icon.textContent = '✓';
+            icon.innerHTML = svgIcon('check', 22);
             title.classList.add('ok');
             title.textContent = 'Всё актуально';
             versions.innerHTML = currentVerLine + currentDateLine;
@@ -1926,7 +2345,7 @@
         if (state === 'new') {
             const r = _updateResult || {};
             icon.classList.add('new');
-            icon.textContent = '⬆';
+            icon.innerHTML = svgIcon('arrowUp', 22);
             title.classList.add('new');
             title.textContent = 'Доступна новая версия';
 
@@ -1952,7 +2371,7 @@
 
         if (state === 'error') {
             icon.classList.add('err');
-            icon.textContent = '⚠';
+            icon.innerHTML = svgIcon('alert', 22);
             title.classList.add('err');
             title.textContent = 'Не удалось проверить';
             versions.innerHTML = currentVerLine + currentDateLine;
@@ -2030,11 +2449,9 @@
 
     function runScheduledCheck() {
         if (document.visibilityState === 'hidden') {
-            // Не проверяем в фоне — перепланируем при возврате к вкладке.
             return;
         }
         if (typeof navigator.onLine === 'boolean' && !navigator.onLine) {
-            // Нет сети — попробуем позже.
             scheduleNextCheck();
             return;
         }
@@ -2089,6 +2506,7 @@
 
         const bgColor = getPanelBackground();
         const textColor = getPanelTextColor();
+        const baseMinWidth = isPhone ? CONFIG.PHONE_PANEL_WIDTH : CONFIG.PANEL_MIN_WIDTH;
         Object.assign(panel.style, {
             zIndex: '1000001',
             background: bgColor,
@@ -2096,7 +2514,7 @@
             color: textColor,
             fontFamily: 'Segoe UI, Arial, sans-serif',
             fontSize: getPanelFontSize(),
-            minWidth: CONFIG.PANEL_MIN_WIDTH,
+            minWidth: baseMinWidth,
             maxWidth: 'calc(100vw - 24px)',
             boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
             display: 'none',
@@ -2106,41 +2524,60 @@
             boxSizing: 'border-box'
         });
 
-        const channelOptions = CONFIG.CHANNELS.map(ch =>
-            `<option value="${ch.domain}" ${settings.targetDomain === ch.domain ? 'selected' : ''}>${ch.name}</option>`
-        ).join('');
+        // Каналы
+        const channelItemsHTML = CONFIG.CHANNELS.map(ch => {
+            const isActive = ch.domain === settings.targetDomain;
+            return `<div class="kp-dd-channel-item ${isActive ? 'active' : ''}" data-value="${ch.domain}">${escapeHtml(ch.name)}</div>`;
+        }).join('');
+        const currentChannelName = getChannelName(settings.targetDomain);
 
-        const embedChecked = settings.embedMode ? 'checked' : '';
+        // Позиции
+        const positionsKeys = isPhone ? CONFIG.PHONE_POSITIONS : CONFIG.DESKTOP_POSITIONS;
+        let currentPosKey = `${settings.btnPosition}-${settings.btnVertical}`;
+        if (!CONFIG.POSITIONS[currentPosKey]) currentPosKey = 'left-middle';
+        if (isPhone && !CONFIG.PHONE_POSITIONS.includes(currentPosKey)) {
+            currentPosKey = 'left-middle';
+        }
 
-        const positionsKeys = isPhone ? CONFIG.PHONE_POSITIONS : Object.keys(CONFIG.POSITIONS);
-        const positionOptions = positionsKeys.map(key => {
-            const pos = CONFIG.POSITIONS[key];
-            const sel = settings.btnPosition === (pos.left ? 'left' : 'right') && settings.btnVertical === pos.vertical ? 'selected' : '';
-            const label = isPhone ? pos.phoneArrow : pos.arrow;
-            return `<option value="${key}" ${sel}>${label}</option>`;
+        const positionItemsHTML = positionsKeys.map(key => {
+            const isActive = key === currentPosKey;
+            return `<div class="kp-dd-pos-item ${isActive ? 'active' : ''}" data-pos="${key}" title="${key}">${svgIcon(posToIconName(key), 18)}</div>`;
         }).join('');
 
-        const elementBorderRadius = CONFIG.PANEL_RADIUS;
-        const dark = isDarkTheme();
-        const selectBg = dark ? '#1f1f1f' : '#fff';
-        const selectBorder = dark ? '#cccccc' : '#ccc';
-        const selectColor = dark ? '#ffffff' : '#1a1a1a';
+        const posMenuCols = isPhone ? 'repeat(2, 1fr)' : 'repeat(3, 1fr)';
 
-        const embedLabelHTML = isPhone ? '' : `
-                <label style="display: flex; justify-content: space-between; align-items: center;">
-                    <span>Встроить</span>
-                    <input type="checkbox" id="kp-embed-mode" ${embedChecked} style="width:18px; height:18px;">
-                </label>
+        const elementBorderRadius = CONFIG.PANEL_RADIUS;
+
+        const embedToggleHTML = isPhone ? '' : `
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span>Встроить</span>
+                <button id="kp-embed-toggle" class="kp-embed-toggle" type="button" data-state="${settings.embedMode ? 'on' : 'off'}" aria-label="Переключить встраивание">
+                    <span class="kp-embed-toggle-track">
+                        <span class="kp-embed-toggle-thumb"></span>
+                    </span>
+                </button>
+            </div>
         `;
 
         const positionBlockDisplay = (isPhone || !settings.embedMode) ? 'flex' : 'none';
         const commitCardHeight = isPhone ? CONFIG.COMMIT_CARD_HEIGHT_PHONE : CONFIG.COMMIT_CARD_HEIGHT_DESKTOP;
-        const updateIconSize = isPhone ? CONFIG.UPDATE_ICON_SIZE_PHONE : CONFIG.UPDATE_ICON_SIZE_DESKTOP;
+        const updateIconSizeNum = isPhone ? 20 : 15;
+
+        const themeToggleHTML = isPhone ? `
+            <button id="kp-theme-toggle" class="kp-theme-toggle" type="button" data-theme="${settings.phoneTheme || 'dark'}" aria-label="Переключить тему">
+                <span class="kp-theme-toggle-track">
+                    <span class="kp-theme-toggle-icon kp-theme-icon-sun">${svgIcon('sun', 12)}</span>
+                    <span class="kp-theme-toggle-icon kp-theme-icon-moon">${svgIcon('moon', 12)}</span>
+                    <span class="kp-theme-toggle-thumb"></span>
+                </span>
+            </button>
+        ` : '';
 
         panel.innerHTML = `
             <div id="kp-settings-view" style="display:flex; flex-direction:column; gap:${CONFIG.PANEL_GAP};">
                 <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(127,127,127,0.18); padding-bottom: 4px; gap: 8px;">
-                    <button id="kp-update-open-btn" class="kp-icon-btn" title="Обновление" style="color:${textColor}; font-size:${updateIconSize};">↻</button>
+                    <button id="kp-update-open-btn" class="kp-icon-btn" title="Обновление" style="color:${textColor};">${svgIcon('refresh', updateIconSizeNum)}</button>
+                    ${themeToggleHTML}
                     <a id="kp-github-link" href="${CONFIG.GITHUB_URL}" target="_blank" rel="noopener" style="
                         color: ${textColor}; text-decoration: none;
                         font-size: ${isPhone ? '13px' : '12px'};
@@ -2148,24 +2585,32 @@
                         touch-action: manipulation; -webkit-tap-highlight-color: transparent;">GitHub</a>
                 </div>
                 <div style="display: flex; flex-direction: column; gap: ${CONFIG.PANEL_GAP};">
-                    <label style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
                         <span>Канал</span>
-                        <select id="kp-domain-select" style="
-                            background:${selectBg}; border:1px solid ${selectBorder}; border-radius:${elementBorderRadius};
-                            padding:${isPhone ? '6px 8px' : '3px 6px'}; color:${selectColor}; font-size:${getPanelFontSize()}; width:auto; min-width:fit-content;">
-                            ${channelOptions}
-                        </select>
-                    </label>
-                    ${embedLabelHTML}
+                        <div class="kp-dd-channel" id="kp-channel-dd" data-value="${settings.targetDomain}">
+                            <div class="kp-dd-channel-trigger">
+                                <span id="kp-channel-dd-label">${escapeHtml(currentChannelName)}</span>
+                                <span class="kp-dd-channel-chev">${svgIcon('chevronDown', 12)}</span>
+                            </div>
+                            <div class="kp-dd-channel-menu" id="kp-channel-dd-menu" style="background:${bgColor};">
+                                ${channelItemsHTML}
+                            </div>
+                        </div>
+                    </div>
+                    ${embedToggleHTML}
                     <div id="kp-position-block" style="display: ${positionBlockDisplay}; flex-direction: column; gap: ${CONFIG.PANEL_GAP};">
-                        <label style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
                             <span>Позиция</span>
-                            <select id="kp-position-select" style="
-                                background:${selectBg}; border:1px solid ${selectBorder}; border-radius:${elementBorderRadius};
-                                padding:${isPhone ? '6px 8px' : '3px 6px'}; color:${selectColor}; font-size:${getPanelFontSize()};">
-                                ${positionOptions}
-                            </select>
-                        </label>
+                            <div class="kp-dd-pos" id="kp-pos-dd" data-value="${currentPosKey}">
+                                <div class="kp-dd-pos-trigger">
+                                    <span class="kp-dd-pos-icon" id="kp-pos-dd-icon">${svgIcon(posToIconName(currentPosKey), 18)}</span>
+                                    <span class="kp-dd-pos-chev">${svgIcon('chevronDown', 12)}</span>
+                                </div>
+                                <div class="kp-dd-pos-menu" id="kp-pos-dd-menu" style="background:${bgColor}; grid-template-columns: ${posMenuCols};">
+                                    ${positionItemsHTML}
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <button id="kp-save-settings" style="
@@ -2178,7 +2623,7 @@
 
             <div id="kp-update-view" style="display:none; flex-direction:column; gap:${CONFIG.PANEL_GAP};">
                 <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(127,127,127,0.18); padding-bottom: 4px; gap: 8px;">
-                    <button id="kp-update-back-btn" class="kp-icon-btn" title="Назад" style="color:${textColor};">←</button>
+                    <button id="kp-update-back-btn" class="kp-icon-btn" title="Назад" style="color:${textColor};">${svgIcon('arrowLeft', 17)}</button>
                     <span style="font-weight: 600; font-size: 13px; opacity: 0.65; text-align:center; flex:1;">Обновление</span>
                     <a href="${CONFIG.GITHUB_URL}" target="_blank" rel="noopener" style="
                         color: ${textColor}; text-decoration: none;
@@ -2187,7 +2632,7 @@
                         touch-action: manipulation; -webkit-tap-highlight-color: transparent;">GitHub</a>
                 </div>
                 <div style="display:flex; flex-direction:column; gap:6px; padding:4px 2px 4px;">
-                    <div class="kp-update-icon" id="kp-update-icon">↻</div>
+                    <div class="kp-update-icon" id="kp-update-icon">${svgIcon('refresh', 22)}</div>
                     <div class="kp-update-title" id="kp-update-title">Проверить обновление?</div>
                     <div class="kp-update-versions" id="kp-update-versions"></div>
                     <div class="kp-commit-card" id="kp-update-commit" style="height:${commitCardHeight};">
@@ -2201,12 +2646,17 @@
             </div>
         `;
 
-        const embedCheckbox = panel.querySelector('#kp-embed-mode');
+        const embedToggle = panel.querySelector('#kp-embed-toggle');
         const positionBlock = panel.querySelector('#kp-position-block');
 
-        if (embedCheckbox) {
-            embedCheckbox.addEventListener('change', () => {
-                positionBlock.style.display = embedCheckbox.checked ? 'none' : 'flex';
+        if (embedToggle) {
+            embedToggle.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const next = embedToggle.dataset.state === 'on' ? 'off' : 'on';
+                embedToggle.dataset.state = next;
+                if (positionBlock) {
+                    positionBlock.style.display = next === 'on' ? 'none' : 'flex';
+                }
             });
         }
 
@@ -2225,6 +2675,72 @@
             showSettingsView();
         });
 
+        // === Кастомный дропдаун каналов ===
+        const channelDd = panel.querySelector('#kp-channel-dd');
+        if (channelDd) {
+            const channelLabel = channelDd.querySelector('#kp-channel-dd-label');
+            const channelMenu = channelDd.querySelector('#kp-channel-dd-menu');
+
+            channelDd.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (e.target.closest('.kp-dd-channel-item')) return;
+                channelDd.classList.toggle('open');
+            });
+
+            channelMenu.querySelectorAll('.kp-dd-channel-item').forEach(item => {
+                item.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const val = item.dataset.value;
+                    channelDd.dataset.value = val;
+                    channelLabel.textContent = item.textContent;
+                    channelMenu.querySelectorAll('.kp-dd-channel-item').forEach(x => x.classList.remove('active'));
+                    item.classList.add('active');
+                    channelDd.classList.remove('open');
+                });
+            });
+        }
+
+        // === Кастомный дропдаун позиции ===
+        const posDd = panel.querySelector('#kp-pos-dd');
+        if (posDd) {
+            const posDdIcon = posDd.querySelector('#kp-pos-dd-icon');
+            const posDdMenu = posDd.querySelector('#kp-pos-dd-menu');
+
+            posDd.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (e.target.closest('.kp-dd-pos-item')) return;
+                posDd.classList.toggle('open');
+            });
+
+            posDdMenu.querySelectorAll('.kp-dd-pos-item').forEach(item => {
+                item.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const key = item.dataset.pos;
+                    posDd.dataset.value = key;
+                    posDdIcon.innerHTML = svgIcon(posToIconName(key), 18);
+                    posDdMenu.querySelectorAll('.kp-dd-pos-item').forEach(x => x.classList.remove('active'));
+                    item.classList.add('active');
+                    posDd.classList.remove('open');
+                });
+            });
+        }
+
+        const themeToggle = panel.querySelector('#kp-theme-toggle');
+        if (themeToggle) {
+            themeToggle.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const next = (settings.phoneTheme === 'light') ? 'dark' : 'light';
+                settings.phoneTheme = next;
+                themeToggle.dataset.theme = next;
+                saveSettings();
+
+                invalidateThemeCache();
+                applyThemeInPlace();
+
+                showToast(next === 'light' ? 'Светлая тема' : 'Тёмная тема');
+            });
+        }
+
         panel.querySelector('#kp-update-actions')?.addEventListener('click', (e) => {
             const btn = e.target.closest('button');
             if (!btn) return;
@@ -2238,15 +2754,17 @@
         });
 
         panel.querySelector('#kp-save-settings').addEventListener('click', () => {
-            settings.targetDomain = panel.querySelector('#kp-domain-select').value;
-            if (embedCheckbox) {
-                settings.embedMode = embedCheckbox.checked;
+            if (channelDd) {
+                settings.targetDomain = channelDd.dataset.value;
+            }
+            if (embedToggle) {
+                settings.embedMode = embedToggle.dataset.state === 'on';
             } else {
                 settings.embedMode = false;
             }
-            if (!settings.embedMode) {
-                const posKey = panel.querySelector('#kp-position-select').value;
-                const pos = CONFIG.POSITIONS[posKey];
+            if (!settings.embedMode && posDd) {
+                const posKey = posDd.dataset.value;
+                const pos = CONFIG.POSITIONS[posKey] || CONFIG.POSITIONS['left-middle'];
                 settings.btnPosition = pos.left ? 'left' : 'right';
                 settings.btnVertical = pos.vertical;
             }
@@ -2519,12 +3037,11 @@
                         padding:0 8px;
                         height:${headerBtnHeight}px;
                         border-radius:14px;
-                        font-size:${isPhone ? '15px' : '13px'};
                         cursor:pointer; font-weight:600;
                         display:inline-flex; align-items:center; justify-content:center;
                         box-sizing:border-box; line-height:1;
                         touch-action:manipulation; -webkit-tap-highlight-color:transparent;">
-                        <span style="display:inline-block; transform:translateY(${isPhone ? '0px' : '-1.5px'});">🔗</span>
+                        ${svgIcon('share', isPhone ? 16 : 13)}
                     </button>
                     <button id="kp-save-current-btn" title="Сохранить текущий фильм в закладки" style="
                         background:#427552; border:none; color:#fff;
@@ -2533,10 +3050,10 @@
                         border-radius:14px;
                         font-size:${isPhone ? '13px' : '12px'};
                         cursor:pointer; font-weight:600;
-                        display:inline-flex; align-items:center; justify-content:center;
+                        display:inline-flex; align-items:center; justify-content:center; gap:4px;
                         box-sizing:border-box; line-height:1;
                         touch-action:manipulation; -webkit-tap-highlight-color:transparent;">
-                        <span style="display:inline-block; transform:translateY(${isPhone ? '0px' : '-1.5px'});">📍Сохранить</span>
+                        <span style="color:#ef4444;display:inline-flex;align-items:center;">${svgIcon('mapPin', isPhone ? 14 : 12)}</span><span>Сохранить</span>
                     </button>
                 </div>
             </div>
@@ -2578,21 +3095,21 @@
         const copyBtn = document.createElement('button');
         copyBtn.id = 'kp-share-copy-btn';
         copyBtn.title = 'Копировать ссылку';
-        copyBtn.textContent = '📋';
-        copyBtn.style.cssText = 'flex: 0 0 auto; width: 38px; padding: 0; border: none; border-radius: 8px; background: #427552; color: #fff; font-weight: 600; cursor: pointer; font-size: 14px; font-family: inherit; transition: opacity 0.2s; touch-action: manipulation; -webkit-tap-highlight-color: transparent;';
+        copyBtn.innerHTML = svgIcon('copy', 14);
+        copyBtn.style.cssText = 'flex: 0 0 auto; width: 38px; padding: 0; border: none; border-radius: 8px; background: #427552; color: #fff; cursor: pointer; font-family: inherit; transition: opacity 0.2s; touch-action: manipulation; -webkit-tap-highlight-color: transparent; display: inline-flex; align-items: center; justify-content: center;';
         linkRow.appendChild(copyBtn);
         shareView.appendChild(linkRow);
 
         const actionRow = document.createElement('div');
         actionRow.style.cssText = 'display: flex; gap: 4px;';
         const exportBtn = document.createElement('button');
-        exportBtn.textContent = '💾 Экспорт';
-        exportBtn.style.cssText = 'flex: 1 1 0; padding: 8px 10px; border: none; border-radius: 8px; background: rgba(99,102,241,0.15); color: ' + textColor + '; font-weight: 600; cursor: pointer; font-size: 12px; font-family: inherit; touch-action: manipulation; -webkit-tap-highlight-color: transparent;';
+        exportBtn.innerHTML = svgIcon('upload', 13) + '<span>Экспорт</span>';
+        exportBtn.style.cssText = 'flex: 1 1 0; padding: 8px 10px; border: none; border-radius: 8px; background: rgba(99,102,241,0.15); color: ' + textColor + '; font-weight: 600; cursor: pointer; font-size: 12px; font-family: inherit; touch-action: manipulation; -webkit-tap-highlight-color: transparent; display: inline-flex; align-items: center; justify-content: center; gap: 5px;';
         actionRow.appendChild(exportBtn);
 
         const importBtn = document.createElement('button');
-        importBtn.textContent = '📥 Импорт';
-        importBtn.style.cssText = 'flex: 1 1 0; padding: 8px 10px; border: none; border-radius: 8px; background: rgba(99,102,241,0.15); color: ' + textColor + '; font-weight: 600; cursor: pointer; font-size: 12px; font-family: inherit; touch-action: manipulation; -webkit-tap-highlight-color: transparent;';
+        importBtn.innerHTML = svgIcon('download', 13) + '<span>Импорт</span>';
+        importBtn.style.cssText = 'flex: 1 1 0; padding: 8px 10px; border: none; border-radius: 8px; background: rgba(99,102,241,0.15); color: ' + textColor + '; font-weight: 600; cursor: pointer; font-size: 12px; font-family: inherit; touch-action: manipulation; -webkit-tap-highlight-color: transparent; display: inline-flex; align-items: center; justify-content: center; gap: 5px;';
         actionRow.appendChild(importBtn);
         shareView.appendChild(actionRow);
 
@@ -2778,15 +3295,13 @@
                 justify-content: center;
                 z-index: 4;
                 cursor: pointer;
-                font-size: ${isPhone ? '18px' : '13px'};
                 color: #fff;
-                text-shadow: 0 1px 3px rgba(0,0,0,0.7);
                 transition: background 0.15s;
                 touch-action: manipulation;
                 -webkit-tap-highlight-color: transparent;
                 user-select: none;
             `;
-            deleteZone.textContent = '✕';
+            deleteZone.innerHTML = svgIcon('x', isPhone ? 16 : 12);
 
             deleteZone.addEventListener('mouseenter', () => {
                 deleteZone.style.background = 'rgba(220, 38, 38, 0.55)';
@@ -3030,8 +3545,8 @@
         container.innerHTML = '';
 
         const btn = document.createElement('button');
-        btn.textContent = '📱 Показать QR-код';
-        btn.style.cssText = 'padding: 8px 16px; border: none; border-radius: 8px; background: #427552; color: #fff; font-weight: 600; cursor: pointer; font-size: 12px; font-family: inherit; transition: opacity 0.2s; touch-action: manipulation; -webkit-tap-highlight-color: transparent;';
+        btn.innerHTML = svgIcon('qr', 14) + '<span>Показать QR-код</span>';
+        btn.style.cssText = 'padding: 8px 16px; border: none; border-radius: 8px; background: #427552; color: #fff; font-weight: 600; cursor: pointer; font-size: 12px; font-family: inherit; transition: opacity 0.2s; touch-action: manipulation; -webkit-tap-highlight-color: transparent; display: inline-flex; align-items: center; justify-content: center; gap: 5px;';
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
             const url = CONFIG.QR_SERVICE_URL + '?size=300x300&margin=10&data=' + encodeURIComponent(text);
