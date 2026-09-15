@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kinopoisk-free
 // @namespace    http://tampermonkey.net/
-// @version      7.5.6
+// @version      7.5.7
 // @description  Бесплатный просмотр фильмом и сериалов на сайте kinopoisk.ru
 // @author       Murckich
 // @icon         https://www.kinopoisk.ru/favicon.ico
@@ -9,29 +9,17 @@
 // @match        http://www.kinopoisk.ru/*
 // @match        https://kinopoisk.ru/*
 // @match        http://kinopoisk.ru/*
-// @match        https://habster.sbs/*
-// @match        https://www.kinopoisk.ws/*
-// @match        https://fbfind.online/*
-// @match        https://*.fbfind.online/*
-// @match        https://fbfind.life/*
-// @match        https://*.fbfind.life/*
-// @match        https://fbfind.top/*
-// @match        https://*.fbfind.top/*
-// @match        https://villybizy.online/*
-// @match        https://*.villybizy.online/*
-// @match        https://kinopoisk.film/*
-// @match        https://kinokino.vip/*
-// @match        https://brogiro.cfd/*
-// @match        https://*.brogiro.cfd/*
-// @match        https://flcksbr.top/*
-// @match        https://sspoisk.ru/*
-// @match        https://*.sspoisk.ru/*
-// @match        https://gromfaer.top/*
-// @match        https://*.gromfaer.top/*
-// @match        https://nonchik.com/*
-// @match        https://*.nonchik.com/*
-// @match        https://troutcdn.site/*
-// @match        https://*.troutcdn.site/*
+// @include      /^https?:\/\/([^/]*\.)?habster\./
+// @include      /^https?:\/\/([^/]*\.)?fbfind\./
+// @include      /^https?:\/\/([^/]*\.)?brogiro\./
+// @include      /^https?:\/\/([^/]*\.)?kinokino\./
+// @include      /^https?:\/\/([^/]*\.)?villybizy\./
+// @include      /^https?:\/\/([^/]*\.)?flcksbr\./
+// @include      /^https?:\/\/([^/]*\.)?gromfaer\./
+// @include      /^https?:\/\/([^/]*\.)?sspoisk\./
+// @include      /^https?:\/\/([^/]*\.)?nonchik\./
+// @include      /^https?:\/\/([^/]*\.)?troutcdn\./
+// @include      /^https?:\/\/([^/]*\.)?kinopoisk\.(?!ru([/.]|$))/
 // @downloadURL  https://raw.githubusercontent.com/murckich/kinopoisk-free/main/kinopoisk-free.user.js
 // @updateURL    https://raw.githubusercontent.com/murckich/kinopoisk-free/main/kinopoisk-free.user.js
 // @grant        GM_xmlhttpRequest
@@ -61,7 +49,7 @@
     'use strict';
 
     const LOCAL_META = {
-        version: '7.5.6',
+        version: '7.5.7',
         date: '15.09.2026'
     };
 
@@ -74,12 +62,12 @@
         DEFAULT_TAB_NAME: 'Главная',
         TAB_NAME_MAX: 13,
         CHANNELS: [
-            { domain: 'habster.sbs',    name: 'Альфа', domains: ['habster.sbs'] },
-            { domain: 'www.kinopoisk.ws',   name: 'Браво', domains: ['www.kinopoisk.ws'] },
-            { domain: 'fbfind.online',  name: 'Гамма', domains: ['fbfind.online', 'fbfind.top', 'fbfind.life', 'kinopoisk.film'] },
-            { domain: 'brogiro.cfd',   name: 'Дельта', domains: ['brogiro.cfd', 'kinokino.vip', 'villybizy.online'] },
-            { domain: 'flcksbr.top',    name: 'Танго', domains: ['flcksbr.top'] },
-            { domain: 'www.gromfaer.top', name: 'Чарли', domains: ['www.gromfaer.top', 'gromfaer.top', 'sspoisk.ru', 'www.sspoisk.ru'] }
+            { brand: ['habster'],                                              type: 'alfa',  domain: 'habster.sbs',      name: 'Альфа',  domains: ['habster.sbs'] },
+            { brand: ['nonchik', 'troutcdn', 'kinopoisk.ws'],                  type: 'bravo', domain: 'www.kinopoisk.ws', name: 'Браво',  domains: ['www.kinopoisk.ws', 'kinopoisk.ws', 'nonchik.com', 'troutcdn.site'] },
+            { brand: ['fbfind'],                                               type: 'gamma', domain: 'fbfind.online',    name: 'Гамма',  domains: ['fbfind.online', 'fbfind.top', 'fbfind.life', 'kinopoisk.film'] },
+            { brand: ['brogiro', 'kinokino', 'villybizy'],                     type: 'gamma', domain: 'brogiro.cfd',      name: 'Дельта', domains: ['brogiro.cfd', 'kinokino.vip', 'villybizy.online'] },
+            { brand: ['flcksbr'],                                              type: 'tango', domain: 'flcksbr.top',      name: 'Танго',  domains: ['flcksbr.top'] },
+            { brand: ['gromfaer', 'sspoisk'],                                  type: 'gamma', domain: 'www.gromfaer.top', name: 'Чарли',  domains: ['www.gromfaer.top', 'gromfaer.top', 'sspoisk.ru', 'www.sspoisk.ru'] }
         ],
         BTN_SIZE: 52,
         SETTINGS_BTN_SIZE: 36,
@@ -719,17 +707,41 @@
         }
     }
 
+    function getChannelByHostname(hostname) {
+        if (!hostname) return null;
+        const h = String(hostname).toLowerCase();
+
+        for (const ch of CONFIG.CHANNELS) {
+            if (ch.domains && ch.domains.some(d => h === d || h.endsWith('.' + d))) {
+                return ch;
+            }
+        }
+
+        for (const ch of CONFIG.CHANNELS) {
+            const brands = Array.isArray(ch.brand) ? ch.brand : (ch.brand ? [ch.brand] : []);
+            for (const b of brands) {
+                if (h === b || h.startsWith(b + '.') || h.includes('.' + b + '.')) {
+                    return ch;
+                }
+            }
+        }
+
+        // kinopoisk.* с любым TLD (кроме .ru и .film) → Браво
+        if (/(^|\.)kinopoisk\.(?!ru([/.]|$)|film([/.]|$))/.test(h)) {
+            return CONFIG.CHANNELS.find(c => c.type === 'bravo') || null;
+        }
+
+        return null;
+    }
+
     function matchChannelDomain(hostname) {
-        return CONFIG.CHANNELS.some(c => c.domains.some(d => hostname.includes(d)));
+        return !!getChannelByHostname(hostname);
     }
 
     const host = window.location.hostname;
     const isBlockedPage = /^\/blocked\.html(\/|$)/.test(window.location.pathname);
-    const isHabster = host === 'habster.sbs' || host.endsWith('.habster.sbs');
-    const isRebuildMirror = (
-        host.match(/(fbfind\.(life|top|online)|villybizy\.online|flcksbr\.top|nonchik\.com|troutcdn\.site)/) ||
-        (matchChannelDomain(host) && !isHabster)
-    );
+    const isHabster = /(^|\.)habster\./.test(host);
+    const isRebuildMirror = matchChannelDomain(host) && !isHabster;
 
     if (matchChannelDomain(host)) {
         try { injectAdCleaner(); } catch (e) { console.warn('kp-ad-cleaner:', e); }
@@ -750,16 +762,24 @@
     function getEarlyCleanCSS() {
         const h = window.location.hostname;
         const rules = [];
-        if (h.match(/(fbfind\.(life|top|online)|villybizy\.online|flcksbr\.top)/)) {
-            rules.push('#tgWrapper, .brand, .topAdPad, #TopAdMb, .adDown, #instructionModal, #tgMain, img[src*="tgimg.png"]');
-        } else if (h.match(/nonchik\.com|kinopoisk\.ws|troutcdn\.site/)) {
-            rules.push('.site-header,.social,.footer,.disclaimer,.spacer-md,#movie_video,#name,.h2');
-        } else if (matchChannelDomain(h)) {
+
+        if (/(^|\.)habster\./.test(h)) {
             rules.push('.header,.tg-banner,#unreleased-notice,ins,.share-bar,.footer,.info-tabs-bar,#panel-comments,.cw,#rkn-stub,#tgMain,img[src*="tgimg.png"]');
-            if (isHabster && !isBlockedPage) {
+            if (!isBlockedPage) {
                 rules.push('.support-fab, #new-release-notice, #trending-block, .info-section');
             }
         }
+        else if (/(^|\.)(nonchik|troutcdn)\./.test(h)) {
+            rules.push('.site-header,.social,.footer,.disclaimer,.spacer-md,#movie_video,#name,.h2');
+        }
+        else if (/(^|\.)kinopoisk\.(ws|me|tv|online|site|xyz|net|org|web|club|space|live|pro|io|co|su|fun|art|store|shop|app|dev|cc|top|life)([/.]|$)/.test(h) &&
+                 !/(^|\.)kinopoisk\.(film|ru)/.test(h)) {
+            rules.push('.site-header,.social,.footer,.disclaimer,.spacer-md,#movie_video,#name,.h2');
+        }
+        else if (/(^|\.)(fbfind|brogiro|kinokino|villybizy|flcksbr|gromfaer|sspoisk)\./.test(h)) {
+            rules.push('#tgWrapper, .brand, .topAdPad, #TopAdMb, .adDown, #instructionModal, #tgMain, img[src*="tgimg.png"]');
+        }
+
         return rules.map(selector => selector + '{display:none!important}').join(' ');
     }
 
@@ -1568,9 +1588,14 @@
     initBlockedPageObserver();
 
     function getMirrorTypeForRebuild() {
-        const h = window.location.hostname;
-        if (h.includes('flcksbr.top')) return 'tango';
-        if (h.includes('nonchik.com') || h.includes('kinopoisk.ws') || h.includes('troutcdn.site')) return 'bravo';
+        const ch = getChannelByHostname(host);
+        if (ch && ch.type) {
+            return ch.type === 'alfa' ? 'gamma' : ch.type;
+        }
+        if (/(^|\.)flcksbr\./.test(host)) return 'tango';
+        if (/(^|\.)(nonchik|troutcdn)\./.test(host)) return 'bravo';
+        if (/(^|\.)kinopoisk\.(ws|me|tv|online|site|xyz|net|org|web|club|space|live|pro|io|co|su|fun|art|store|shop|app|dev|cc|top|life)([/.]|$)/.test(host) &&
+            !/(^|\.)kinopoisk\.(film|ru)/.test(host)) return 'bravo';
         return 'gamma';
     }
 
@@ -2549,7 +2574,6 @@
             return `<div class="kp-dd-pos-item ${isActive ? 'active' : ''}" data-pos="${key}" title="${key}">${svgIcon(posToIconName(key), 18)}</div>`;
         }).join('');
         const posMenuCols = isPhone ? 'repeat(2, 1fr)' : 'repeat(3, 1fr)';
-        const elementBorderRadius = CONFIG.PANEL_RADIUS;
 
         const embedToggleHTML = isPhone ? '' : `
             <div style="display: flex; justify-content: space-between; align-items: center;">
