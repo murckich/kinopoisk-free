@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kinopoisk-free
 // @namespace    http://tampermonkey.net/
-// @version      7.5.5
+// @version      7.5.6
 // @description  Бесплатный просмотр фильмом и сериалов на сайте kinopoisk.ru
 // @author       Murckich
 // @icon         https://www.kinopoisk.ru/favicon.ico
@@ -36,6 +36,7 @@
 // @updateURL    https://raw.githubusercontent.com/murckich/kinopoisk-free/main/kinopoisk-free.user.js
 // @grant        GM_xmlhttpRequest
 // @connect      raw.githubusercontent.com
+// @connect      habster.sbs
 // @run-at       document-start
 // @license      Apache-2.0
 // ==/UserScript==
@@ -60,8 +61,8 @@
     'use strict';
 
     const LOCAL_META = {
-        version: '7.5.5',
-        date: '13.09.2026'
+        version: '7.5.6',
+        date: '15.09.2026'
     };
 
     const CONFIG = {
@@ -70,7 +71,7 @@
         ACTIVE_TAB_KEY: 'kpActiveTab',
         DEFAULT_DOMAIN: 'habster.sbs',
         DEFAULT_TAB_ID: 'default',
-        DEFAULT_TAB_NAME: 'Все',
+        DEFAULT_TAB_NAME: 'Главная',
         TAB_NAME_MAX: 13,
         CHANNELS: [
             { domain: 'habster.sbs',    name: 'Альфа', domains: ['habster.sbs'] },
@@ -104,6 +105,58 @@
             '[class*="Buttons_container"]',
             '[class*="actionButtons"]'
         ],
+
+        AD_HOSTS: [
+            'adlook.tv',
+            'vak345.com',
+            'moviead55.ru',
+            'deltarockme.com',
+            'myroledance.com',
+            'beebounder.com',
+            '101partners-stat2.com',
+            'yandex.ru/ads/',
+            'yastatic.net/safeframe-bundles/',
+            'ads.adfox.ru',
+            'counter.yadro.ru',
+            'mradx.net',
+            'rb-adman.com',
+            'admanmedia.com',
+            'getshop.tv'
+        ],
+        AD_DOM_PREFIXES: [
+            'adLookPlayer-',
+            'Adlk-',
+            'GIzYQ', 'GAnOn', 'PBsBx', 'scQxl', 'irpcl',
+            'ad-element'
+        ],
+        AD_SELECTORS: [
+            '.adlook-pc-wrapper',
+            '.adlook-mob-wrapper',
+            '.adlk-sticky',
+            '.adlk-content',
+            '.adlk-player-host',
+            '.adlk-creativePlayer',
+            '#movie_video',
+            '#tgWrapper',
+            '#TopAdMb',
+            '.topAdPad',
+            '.adDown',
+            '.brand',
+            '#instructionModal',
+            '.cIframeCover',
+            'iframe[src*="moviead55"]',
+            'iframe[src*="adlook"]',
+            'iframe[src*="adlk"]',
+            'ins.adsbygoogle',
+            '[data-mds]',
+            '[id^="ad-element"]',
+            '[class^="rb-adman-"]',
+            '[class*=" rb-adman-"]',
+            '[src*="mradx.net"]',
+            '[style*="r.mradx.net"]',
+            '[class*="videoplayer_ads_skip"]'
+        ],
+
         LIGHT: {
             EMBED_MAIN_COLOR: '#1a1a1a',
             EMBED_SETTINGS_COLOR: '#1a1a1a',
@@ -170,7 +223,10 @@
         MOVIE_DATA_CACHE_TTL: 30000,
         CHANGELOG_MAX: 1000,
         COMMIT_CARD_HEIGHT_DESKTOP: '120px',
-        COMMIT_CARD_HEIGHT_PHONE: '100px'
+        COMMIT_CARD_HEIGHT_PHONE: '100px',
+        GETINFO_URL: 'https://habster.sbs/getinfo.php',
+        MOVIE_DETAILS_CACHE_KEY: 'kpMovieDetailsCache',
+        MOVIE_DETAILS_CACHE_TTL: 7 * 24 * 60 * 60 * 1000
     };
 
     const isTouchDevice = (() => {
@@ -211,8 +267,355 @@
         }
     }
 
+    function injectAdCleaner() {
+        if (window.__kpAdCleanerDone) return;
+        window.__kpAdCleanerDone = true;
+
+        const hostRe = new RegExp(
+            CONFIG.AD_HOSTS.map(h => h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'),
+            'i'
+        );
+
+        const AD_ID_RE = /^[A-Za-z]{4,8}\d{10,}$/;
+
+        const isAdUrl = (url) => {
+            if (!url) return false;
+            try { return hostRe.test(String(url)); } catch (e) { return false; }
+        };
+
+        const isAdElement = (el) => {
+            if (!el || el.nodeType !== 1) return false;
+            const id = el.id || '';
+            const cls = (typeof el.className === 'string' ? el.className : '') || '';
+
+            for (const p of CONFIG.AD_DOM_PREFIXES) {
+                if (id.startsWith(p)) return true;
+            }
+
+            if (AD_ID_RE.test(id)) {
+                const style = el.getAttribute('style') || '';
+                if (/position\s*:\s*(fixed|absolute)/i.test(style) ||
+                    el.hasAttribute('data-mds')) {
+                    return true;
+                }
+            }
+
+            if (el.hasAttribute && el.hasAttribute('data-mds')) return true;
+
+            if (cls.includes('rb-adman') ||
+                cls.includes('videoplayer_ads_skip') ||
+                cls.includes('adman-')) return true;
+
+            if (el.parentElement === document.documentElement &&
+                el.tagName === 'DIV' && id && !id.startsWith('kp-')) {
+                const style = el.getAttribute('style') || '';
+                if (/position\s*:\s*(fixed|absolute)/i.test(style)) return true;
+            }
+
+            if (el.matches) {
+                for (const sel of CONFIG.AD_SELECTORS) {
+                    try { if (el.matches(sel)) return true; } catch (e) {}
+                }
+            }
+            return false;
+        };
+
+        const deepQueryAll = (selector, root = document) => {
+            const out = [];
+            const walk = (node) => {
+                if (!node) return;
+                try {
+                    node.querySelectorAll?.(selector).forEach(el => out.push(el));
+                } catch (e) {}
+                try {
+                    node.querySelectorAll?.('*').forEach(el => {
+                        if (el.shadowRoot) walk(el.shadowRoot);
+                    });
+                } catch (e) {}
+                try {
+                    node.querySelectorAll?.('iframe').forEach(f => {
+                        try {
+                            if (f.contentDocument) walk(f.contentDocument);
+                        } catch (e) {}
+                    });
+                } catch (e) {}
+            };
+            walk(root);
+            return out;
+        };
+
+        const css = `
+            ${CONFIG.AD_SELECTORS.join(',')}{display:none!important;visibility:hidden!important}
+            [id][style*="position: fixed"][style*="pointer-events: none"]{display:none!important}
+            html > div[id]:not([id^="kp-"]) {
+                visibility: hidden !important;
+                pointer-events: none !important;
+                content-visibility: hidden !important;
+            }
+        `;
+        injectStyleWhenHeadReady('kp-ad-clean-style', css);
+
+        const origAppend = Node.prototype.appendChild;
+        Node.prototype.appendChild = function(node) {
+            try {
+                if (isAdElement(node)) return node;
+                if (node && node.tagName &&
+                    (node.tagName === 'SCRIPT' || node.tagName === 'IFRAME' || node.tagName === 'IMG') &&
+                    isAdUrl(node.getAttribute && node.getAttribute('src'))) {
+                    return node;
+                }
+            } catch (e) {}
+            return origAppend.call(this, node);
+        };
+        const origInsert = Node.prototype.insertBefore;
+        Node.prototype.insertBefore = function(node, ref) {
+            try {
+                if (isAdElement(node)) return node;
+                if (node && node.tagName &&
+                    (node.tagName === 'SCRIPT' || node.tagName === 'IFRAME' || node.tagName === 'IMG') &&
+                    isAdUrl(node.getAttribute && node.getAttribute('src'))) {
+                    return node;
+                }
+            } catch (e) {}
+            return origInsert.call(this, node, ref);
+        };
+
+        const origSetAttr = Element.prototype.setAttribute;
+        Element.prototype.setAttribute = function(name, value) {
+            if (name === 'src' && isAdUrl(value)) return;
+            return origSetAttr.call(this, name, value);
+        };
+
+        const origFetch = window.fetch;
+        if (origFetch) {
+            window.fetch = function(input) {
+                const url = typeof input === 'string' ? input : (input && input.url) || '';
+                if (isAdUrl(url)) return Promise.reject(new Error('kp-ad-cleaner'));
+                return origFetch.apply(this, arguments);
+            };
+        }
+
+        const origXOpen = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function(method, url) {
+            if (isAdUrl(url)) { this._kpBlocked = true; return; }
+            return origXOpen.apply(this, arguments);
+        };
+        const origXSend = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.send = function() {
+            if (this._kpBlocked) return;
+            return origXSend.apply(this, arguments);
+        };
+
+        const origOpenWin = window.open;
+        window.open = function(url) {
+            if (isAdUrl(url)) return null;
+            return origOpenWin.apply(this, arguments);
+        };
+
+        const innerHTMLDesc = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+        if (innerHTMLDesc && innerHTMLDesc.set) {
+            const adTagRe = /<(script|iframe|div|ins|img)\b[^>]*(?:adlook\.tv|vak345\.com|moviead55\.ru|deltarockme\.com|myroledance\.com|beebounder\.com|101partners-stat2\.com|ads\.adfox\.ru|yandex\.ru\/ads)[^>]*>(?:<\/\1>)?/gi;
+            Object.defineProperty(Element.prototype, 'innerHTML', {
+                get: innerHTMLDesc.get,
+                set(html) {
+                    if (typeof html === 'string' && adTagRe.test(html)) {
+                        adTagRe.lastIndex = 0;
+                        html = html.replace(adTagRe, '');
+                    }
+                    return innerHTMLDesc.set.call(this, html);
+                },
+                configurable: true
+            });
+        }
+
+        const origInsertAdj = Element.prototype.insertAdjacentHTML;
+        Element.prototype.insertAdjacentHTML = function(pos, html) {
+            if (typeof html === 'string') {
+                const adTagRe = /<(script|iframe|div|ins|img)\b[^>]*(?:adlook\.tv|vak345\.com|moviead55\.ru|deltarockme\.com|myroledance\.com|beebounder\.com|101partners-stat2\.com|ads\.adfox\.ru|yandex\.ru\/ads)[^>]*>(?:<\/\1>)?/gi;
+                if (adTagRe.test(html)) {
+                    adTagRe.lastIndex = 0;
+                    html = html.replace(adTagRe, '');
+                }
+            }
+            return origInsertAdj.call(this, pos, html);
+        };
+
+        try {
+            const scriptSrcDesc = Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, 'src');
+            if (scriptSrcDesc && scriptSrcDesc.set) {
+                Object.defineProperty(HTMLScriptElement.prototype, 'src', {
+                    get: scriptSrcDesc.get,
+                    set(v) {
+                        if (isAdUrl(v)) { try { this.remove(); } catch (e) {} return; }
+                        return scriptSrcDesc.set.call(this, v);
+                    },
+                    configurable: true
+                });
+            }
+            const iframeSrcDesc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'src');
+            if (iframeSrcDesc && iframeSrcDesc.set) {
+                Object.defineProperty(HTMLIFrameElement.prototype, 'src', {
+                    get: iframeSrcDesc.get,
+                    set(v) {
+                        if (isAdUrl(v)) { try { this.remove(); } catch (e) {} return; }
+                        return iframeSrcDesc.set.call(this, v);
+                    },
+                    configurable: true
+                });
+            }
+        } catch (e) {}
+
+        try {
+            const origAttachShadow = Element.prototype.attachShadow;
+            Element.prototype.attachShadow = function(init) {
+                const result = origAttachShadow.call(this, init);
+                try {
+                    if (this.tagName === 'DIV' && this.id && AD_ID_RE.test(this.id) &&
+                        !this.id.startsWith('kp-')) {
+                        const style = this.getAttribute('style') || '';
+                        if (/position\s*:\s*(fixed|absolute)/i.test(style)) {
+                            setTimeout(() => { try { this.remove(); } catch(e) {} }, 0);
+                        }
+                    }
+                } catch (e) {}
+                return result;
+            };
+        } catch (e) {}
+
+        document.addEventListener('click', (e) => {
+            const t = e.target;
+            if (t && t.classList && t.classList.contains('cIframeCover')) {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+            }
+        }, true);
+
+        const cleanNode = (node) => {
+            if (!node || node.nodeType !== 1) return;
+            if (isAdElement(node)) { try { node.remove(); } catch (e) {} return; }
+            if (node.tagName &&
+                (node.tagName === 'SCRIPT' || node.tagName === 'IFRAME') &&
+                isAdUrl(node.getAttribute('src'))) {
+                try { node.remove(); } catch (e) {}
+                return;
+            }
+            if (node.querySelectorAll) {
+                try {
+                    node.querySelectorAll(CONFIG.AD_SELECTORS.join(','))
+                        .forEach(el => el.remove());
+                } catch (e) {}
+                node.querySelectorAll('iframe').forEach(f => {
+                    if (isAdUrl(f.getAttribute('src'))) f.remove();
+                    if (f.hasAttribute('data-covered')) f.removeAttribute('data-covered');
+                });
+                node.querySelectorAll('div[id]').forEach(d => {
+                    if (AD_ID_RE.test(d.id)) {
+                        const style = d.getAttribute('style') || '';
+                        if (/position\s*:\s*(fixed|absolute)/i.test(style) ||
+                            d.hasAttribute('data-mds')) {
+                            d.remove();
+                        }
+                    }
+                });
+            }
+        };
+
+        const obs = new MutationObserver((muts) => {
+            for (const m of muts) {
+                if (m.type === 'childList') {
+                    m.addedNodes.forEach(cleanNode);
+                } else if (m.type === 'attributes' && m.target) {
+                    const t = m.target;
+                    if (t.tagName &&
+                        (t.tagName === 'SCRIPT' || t.tagName === 'IFRAME') &&
+                        isAdUrl(t.getAttribute('src'))) {
+                        t.remove();
+                    }
+                    if (t.tagName === 'DIV' && t.id && AD_ID_RE.test(t.id)) {
+                        const style = t.getAttribute('style') || '';
+                        if (/position\s*:\s*(fixed|absolute)/i.test(style)) t.remove();
+                    }
+                }
+            }
+        });
+
+        const startObserver = () => {
+            obs.observe(document.documentElement, {
+                childList: true, subtree: true,
+                attributes: true, attributeFilter: ['src', 'id', 'style']
+            });
+            try {
+                deepQueryAll(CONFIG.AD_SELECTORS.join(','))
+                    .forEach(el => el.remove());
+                deepQueryAll('div[id]').forEach(d => {
+                    if (AD_ID_RE.test(d.id)) {
+                        const style = d.getAttribute('style') || '';
+                        if (/position\s*:\s*(fixed|absolute)/i.test(style) ||
+                            d.hasAttribute('data-mds')) d.remove();
+                    }
+                });
+            } catch (e) {}
+            document.querySelectorAll('iframe').forEach(f => {
+                if (isAdUrl(f.getAttribute('src'))) f.remove();
+                if (f.hasAttribute('data-covered')) f.removeAttribute('data-covered');
+            });
+        };
+
+        if (document.documentElement) startObserver();
+        else {
+            const htmlObs = new MutationObserver(() => {
+                if (document.documentElement) {
+                    htmlObs.disconnect();
+                    startObserver();
+                }
+            });
+            htmlObs.observe(document, { childList: true, subtree: true });
+            document.addEventListener('DOMContentLoaded', () => {
+                if (document.documentElement) startObserver();
+            }, { once: true });
+        }
+
+        let rafCount = 0;
+        const MAX_RAF = 300;
+        const rafSweep = () => {
+            if (rafCount++ > MAX_RAF) return;
+            try {
+                deepQueryAll('html > div[id], div[id]').forEach(d => {
+                    if (d.id.startsWith('kp-')) return;
+                    const style = d.getAttribute('style') || '';
+                    const isFixed = /position\s*:\s*(fixed|absolute)/i.test(style);
+                    if ((AD_ID_RE.test(d.id) || d.hasAttribute('data-mds')) && isFixed) {
+                        d.remove();
+                    }
+                });
+            } catch (e) {}
+            requestAnimationFrame(rafSweep);
+        };
+        requestAnimationFrame(rafSweep);
+
+        setInterval(() => {
+            try {
+                deepQueryAll(CONFIG.AD_SELECTORS.join(','))
+                    .forEach(el => el.remove());
+                deepQueryAll('div[id]').forEach(d => {
+                    if (d.id.startsWith('kp-')) return;
+                    const style = d.getAttribute('style') || '';
+                    const isFixed = /position\s*:\s*(fixed|absolute)/i.test(style);
+                    if ((AD_ID_RE.test(d.id) || d.hasAttribute('data-mds')) && isFixed) {
+                        d.remove();
+                    }
+                });
+            } catch (e) {}
+        }, 1000);
+    }
+
     function isDarkTheme() {
         if (isPhone) return (settings.phoneTheme || 'dark') === 'dark';
+
+        if (matchChannelDomain(window.location.hostname)) {
+            return true;
+        }
 
         const now = Date.now();
         if (_darkThemeCache.value !== null && (now - _darkThemeCache.ts) < CONFIG.THEME_CACHE_TTL) {
@@ -328,6 +731,10 @@
         (matchChannelDomain(host) && !isHabster)
     );
 
+    if (matchChannelDomain(host)) {
+        try { injectAdCleaner(); } catch (e) { console.warn('kp-ad-cleaner:', e); }
+    }
+
     if (isRebuildMirror || isBlockedPage) {
         injectStyleWhenHeadReady('kp-hide-body-early', 'body { visibility: hidden !important; }');
         document.documentElement.style.visibility = 'hidden';
@@ -424,7 +831,7 @@
         .player-wrap { position: relative; margin: 0.75rem; border-radius: 0 0 14px 14px; overflow: hidden; z-index: 1; }
         .kinobox_iframe_container, .kinobox__iframeWrapper { position: relative; padding-top: 56.25% !important; }
         .kinobox_iframe, .kinobox__iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: none; border-radius: 12px; background: #000; }
-        .movie-info { background: var(--bg-card); border: 1px solid var(--border); border-radius: 18px; padding: 1.5rem; margin-bottom: 1rem; }
+        .movie-info { padding: 1.5rem; }
         .movie-info-inner { display: flex; gap: 1.5rem; }
         @media (max-width: 600px) { .movie-info-inner { flex-direction: column; } }
         .movie-poster-wrap { flex-shrink: 0; width: 130px; }
@@ -542,9 +949,6 @@
         .kp-update-actions .kp-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
         .kp-update-actions .kp-btn-primary.warn { background: #c47d2a; }
 
-        /* ============================================================ */
-        /* Панель закладок — CSS-переменные + data-theme */
-        /* ============================================================ */
         .kp-saved-panel {
             --kp-bg: #f5f5f5;
             --kp-text: #1a1a1a;
@@ -1171,10 +1575,147 @@
     }
 
     function getMovieInfo() {
-        const titleEl = document.querySelector('title');
-        const docTitle = titleEl ? titleEl.textContent : document.title;
-        const match = docTitle.match(/^(.+?)\s*\((\d{4})\)/);
-        return match ? { name: match[1].trim(), year: match[2] } : null;
+        const docTitle = (document.querySelector('title')?.textContent || document.title || '').trim();
+        let m = docTitle.match(/^(.+?)\s*\((\d{4})\)/);
+        if (m && m[1].trim() && m[1].trim() !== 'KinoSave') {
+            return { name: m[1].trim(), year: m[2] };
+        }
+
+        const domTitle = document.querySelector('.movie-title, #movie-details h1, #name');
+        const domYear =
+            document.querySelector('.movie-orig')?.textContent?.match(/\b(\d{4})\b/)?.[1] ||
+            document.querySelector('.movie-meta .meta-tag')?.textContent?.match(/\b(\d{4})\b/)?.[1] ||
+            document.querySelector('#name')?.textContent?.match(/\((\d{4})\)/)?.[1];
+        if (domTitle && domTitle.textContent.trim()) {
+            return {
+                name: domTitle.textContent.trim(),
+                year: domYear || ''
+            };
+        }
+
+        const og = document.querySelector('meta[property="og:title"]')?.getAttribute('content');
+        if (og) {
+            m = og.match(/^(.+?)\s*\((\d{4})\)/);
+            if (m) return { name: m[1].trim(), year: m[2] };
+            return { name: og.trim(), year: '' };
+        }
+
+        const h1 = document.querySelector('h1');
+        if (h1 && h1.textContent.trim()) {
+            return { name: h1.textContent.trim(), year: '' };
+        }
+
+        return null;
+    }
+
+    function waitForMovieInfo(maxWait = 4000) {
+        return new Promise((resolve) => {
+            const start = Date.now();
+            const tick = () => {
+                const info = getMovieInfo();
+                if (info && info.name && info.name !== 'KinoSave') return resolve(info);
+                if (Date.now() - start > maxWait) return resolve(getMovieInfo());
+                setTimeout(tick, 200);
+            };
+            tick();
+        });
+    }
+
+    async function loadMovieDetails(kpId) {
+        if (!kpId || kpId === '0') return null;
+        const cacheKey = CONFIG.MOVIE_DETAILS_CACHE_KEY;
+        const now = Date.now();
+
+        try {
+            const raw = localStorage.getItem(cacheKey);
+            if (raw) {
+                const cache = JSON.parse(raw);
+                const entry = cache[kpId];
+                if (entry && (now - entry.ts) < CONFIG.MOVIE_DETAILS_CACHE_TTL) {
+                    return entry.data;
+                }
+            }
+        } catch (e) {}
+
+        try {
+            const url = CONFIG.GETINFO_URL + '?kp_id=' + encodeURIComponent(kpId);
+            const res = await gmFetch(url, { timeout: 8000 });
+            if (!res.ok) return null;
+            const data = JSON.parse(res.responseText || '{}');
+            if (!data || data.error || !data.kinopoiskId) return null;
+
+            try {
+                const raw = localStorage.getItem(cacheKey);
+                const cache = raw ? JSON.parse(raw) : {};
+                cache[kpId] = { ts: now, data };
+                for (const k in cache) {
+                    if (now - cache[k].ts > 30 * 24 * 60 * 60 * 1000) delete cache[k];
+                }
+                localStorage.setItem(cacheKey, JSON.stringify(cache));
+            } catch (e) {}
+
+            return data;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function renderMovieInfoBlock(movie, details, posterSrc) {
+        const name = (details && (details.nameRu || details.nameOriginal)) || (movie && movie.name) || '';
+        const original = (details && details.nameOriginal) || '';
+        const year = (details && details.year) || (movie && movie.year) || '';
+        const rating = details && details.ratingKinopoisk;
+        const ratingImdb = details && details.ratingImdb;
+        const votes = details && details.ratingKinopoiskVoteCount;
+        const filmLength = details && details.filmLength;
+        const slogan = details && details.slogan;
+        const countries = ((details && details.countries) || []).map(c => c.country).filter(Boolean);
+        const genres = ((details && details.genres) || []).map(g => g.genre).filter(Boolean);
+        const description = (details && details.description) || '';
+        const displayPoster = (details && details.posterUrl) || posterSrc || '';
+
+        let metaTags = '';
+        if (rating)     metaTags += `<span class="meta-tag kp">★ ${parseFloat(rating).toFixed(1)} КП</span>`;
+        if (ratingImdb) metaTags += `<span class="meta-tag kp">★ ${parseFloat(ratingImdb).toFixed(1)} IMDb</span>`;
+        if (year)       metaTags += `<span class="meta-tag">${escapeHtml(String(year))}</span>`;
+        genres.slice(0, 3).forEach(g => {
+            metaTags += `<span class="meta-tag">${escapeHtml(g)}</span>`;
+        });
+
+        let rows = '';
+        if (countries.length) {
+            rows += `<div class="movie-row"><span class="movie-row-label">Страна: </span><span class="movie-row-val">${escapeHtml(countries.join(', '))}</span></div>`;
+        }
+        if (filmLength) {
+            rows += `<div class="movie-row"><span class="movie-row-label">Длительность: </span><span class="movie-row-val">${escapeHtml(String(filmLength))} мин.</span></div>`;
+        }
+        if (slogan) {
+            rows += `<div class="movie-row"><span class="movie-row-label">Слоган: </span><span class="movie-row-val">${escapeHtml(slogan)}</span></div>`;
+        }
+        if (votes) {
+            rows += `<div class="movie-row"><span class="movie-row-label">Голоса КП: </span><span class="movie-row-val">${escapeHtml(String(votes))}</span></div>`;
+        }
+
+        const origLine = (original && original !== name)
+            ? `<div class="movie-orig">${escapeHtml(original)}</div>`
+            : '';
+
+        const descLine = description ? `<div class="movie-desc">${description}</div>` : '';
+
+        return `
+            <div class="movie-info-inner">
+                <div class="movie-poster-wrap">
+                    <img class="movie-poster-img" id="kp-movie-poster" src="${escapeHtml(displayPoster)}" alt="">
+                </div>
+                <div class="movie-details" id="kp-movie-details">
+                    <h1 class="movie-title">${escapeHtml(name)}</h1>
+                    ${origLine}
+                    <div class="movie-meta">${metaTags}</div>
+                    <div class="movie-rows">${rows}</div>
+                    ${descLine}
+                </div>
+            </div>
+        `;
     }
 
     function addStylesIfNeeded() {
@@ -1205,7 +1746,12 @@
         if (!iframeContainer || menuItems.length === 0) { showBody(); return; }
         const container = document.createElement('div');
         container.id = 'kp-alfa-page';
+        const posterSrc = `https://kinopoiskapiunofficial.tech/images/posters/kp_small/${kpId}.jpg`;
+
         container.innerHTML = `
+            <div class="movie-info" id="kp-movie-info">
+                ${renderMovieInfoBlock(movie, null, posterSrc)}
+            </div>
             <div class="player-section">
                 <div class="player-top-bar">
                     <div class="kp-select" id="kp-select">
@@ -1220,26 +1766,13 @@
                 <div class="vpn-warning"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>Плеер можно выбрать другой, нажмите на список</div>
                 <div class="player-wrap" id="kp-player-wrap"></div>
                 <div class="vpn-warning"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>VPN может мешать воспроизведению</div>
-            </div>
-            <div class="movie-info">
-                <div class="movie-info-inner">
-                    <div class="movie-poster-wrap"><img class="movie-poster-img" id="kp-movie-poster" src="" alt=""></div>
-                    <div class="movie-details" id="kp-movie-details">
-                        <h1 class="movie-title"></h1><div class="movie-orig"></div><div class="movie-meta"></div><div class="movie-rows"></div><div class="movie-desc"></div>
-                    </div>
-                </div>
             </div>`;
-        const posterImg = container.querySelector('#kp-movie-poster');
-        posterImg.src = `https://kinopoiskapiunofficial.tech/images/posters/kp_small/${kpId}.jpg`;
-        posterImg.onerror = () => { posterImg.style.display = 'none'; };
-        if (movie) {
-            container.querySelector('.movie-title').textContent = movie.name;
-            container.querySelector('.movie-orig').textContent = movie.year;
-        }
+
         const playerWrap = container.querySelector('#kp-player-wrap');
         iframeContainer.style.position = 'relative';
         iframeContainer.style.paddingTop = '56.25%';
         playerWrap.appendChild(iframeContainer);
+
         const selectMenu = container.querySelector('#kp-select-menu');
         const selectLabel = container.querySelector('#kp-select-label');
         const selectEl = container.querySelector('#kp-select');
@@ -1270,10 +1803,35 @@
         }
         const selectTrigger = container.querySelector('#kp-select-trigger');
         selectTrigger.addEventListener('click', (e) => { e.stopPropagation(); selectEl.classList.toggle('open'); });
+
         document.body.innerHTML = '';
         document.body.appendChild(container);
         addStylesIfNeeded();
         showBody();
+
+        let _currentMovie = movie || {};
+        let _currentDetails = null;
+        const _refreshInfo = () => {
+            const info = container.querySelector('#kp-movie-info');
+            if (info) info.innerHTML = renderMovieInfoBlock(_currentMovie, _currentDetails, posterSrc);
+        };
+
+        if (!movie || !movie.year || !movie.name) {
+            waitForMovieInfo().then(full => {
+                if (full && full.name) {
+                    _currentMovie = { name: full.name, year: full.year || (movie && movie.year) || '' };
+                    _refreshInfo();
+                }
+            });
+        }
+        if (kpId && kpId !== '0') {
+            loadMovieDetails(kpId).then(details => {
+                if (details) {
+                    _currentDetails = details;
+                    _refreshInfo();
+                }
+            });
+        }
     }
 
     function rebuildMirror() {
@@ -1290,42 +1848,69 @@
         const posterImg = document.querySelector('#film img');
         const torrentBtn = document.getElementById('ltorr');
         if (!iframe) { showBody(); return; }
+
+        const kpId = (document.querySelector('script[data-kinopoisk]')?.getAttribute('data-kinopoisk'))
+            || (window.USER_NOTE_ID ? String(window.USER_NOTE_ID) : '')
+            || extractKpId()
+            || '0';
+        const posterSrc = (posterImg && posterImg.src)
+            || `https://kinopoiskapiunofficial.tech/images/posters/kp_small/${kpId}.jpg`;
+        const movie = getMovieInfo();
+
         const container = document.createElement('div');
         container.id = 'kp-alfa-page';
+
         container.innerHTML = `
+            <div class="movie-info" id="kp-movie-info">
+                ${renderMovieInfoBlock(movie, null, posterSrc)}
+            </div>
             <div class="player-section">
                 <div class="player-top-bar"></div>
                 <div class="vpn-warning"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>Плеер можно выбрать другой, нажмите на список</div>
                 <div class="player-wrap" id="kp-player-wrap"></div>
                 <div class="vpn-warning"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>VPN может мешать воспроизведению</div>
-            </div>
-            <div class="movie-info"><div class="movie-info-inner"><div class="movie-poster-wrap"><img class="movie-poster-img" id="kp-movie-poster" src="" alt=""></div><div class="movie-details" id="kp-movie-details"><h1 class="movie-title"></h1><div class="movie-orig"></div><div class="movie-meta"></div><div class="movie-rows"></div><div class="movie-desc"></div></div></div></div>`;
-        const newPoster = container.querySelector('#kp-movie-poster');
-        if (posterImg && posterImg.src) newPoster.src = posterImg.src;
-        else {
-            const kpId = document.querySelector('script[data-kinopoisk]')?.getAttribute('data-kinopoisk') || '0';
-            newPoster.src = `https://kinopoiskapiunofficial.tech/images/posters/kp_small/${kpId}.jpg`;
-        }
-        newPoster.onerror = () => { newPoster.style.display = 'none'; };
+            </div>`;
+
         const playerWrap = container.querySelector('#kp-player-wrap');
         playerWrap.style.paddingTop = '56.25%';
         iframe.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:none;border-radius:12px;background:#000;';
         playerWrap.appendChild(iframe);
+
         const playerTopBar = container.querySelector('.player-top-bar');
         if (torrentBtn) {
             torrentBtn.classList.add('kp-torrent-btn');
             torrentBtn.style.display = '';
             playerTopBar.appendChild(torrentBtn);
         }
-        const movie = getMovieInfo();
-        if (movie) {
-            container.querySelector('.movie-title').textContent = movie.name;
-            container.querySelector('.movie-orig').textContent = movie.year || '';
-        }
+
         document.body.innerHTML = '';
         document.body.appendChild(container);
         addStylesIfNeeded();
         showBody();
+
+        let _currentMovie = movie || {};
+        let _currentDetails = null;
+        const _refreshInfo = () => {
+            const info = container.querySelector('#kp-movie-info');
+            if (info) info.innerHTML = renderMovieInfoBlock(_currentMovie, _currentDetails, posterSrc);
+        };
+
+        if (!movie || !movie.year || !movie.name) {
+            waitForMovieInfo().then(full => {
+                if (full && full.name) {
+                    _currentMovie = { name: full.name, year: full.year || (movie && movie.year) || '' };
+                    _refreshInfo();
+                }
+            });
+        }
+        if (kpId && kpId !== '0') {
+            loadMovieDetails(kpId).then(details => {
+                if (details) {
+                    _currentDetails = details;
+                    _refreshInfo();
+                }
+            });
+        }
     }
 
     function waitForRebuild() {
@@ -2013,7 +2598,6 @@
                         </div>
                     </div>
                 </div>
-                <button id="kp-save-settings" style="background:#427552; border:none; color:#fff; padding:${isPhone ? '10px 0' : '6px 0'}; border-radius:${elementBorderRadius}; font-weight:600; cursor:pointer; transition:0.2s; font-size:${getPanelFontSize()}; margin-top:2px;">Сохранить</button>
             </div>
             <div id="kp-update-view" style="display:none; flex-direction:column; gap:${CONFIG.PANEL_GAP};">
                 <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(127,127,127,0.18); padding-bottom: 4px; gap: 8px;">
@@ -2041,6 +2625,12 @@
                 const next = embedToggle.dataset.state === 'on' ? 'off' : 'on';
                 embedToggle.dataset.state = next;
                 if (positionBlock) positionBlock.style.display = next === 'on' ? 'none' : 'flex';
+                settings.embedMode = (next === 'on');
+                saveSettings();
+                panel.style.display = 'none';
+                currentUIUrl = null;
+                createUI();
+                showToast(next === 'on' ? 'Встроенный режим' : 'Фиксированный режим');
             });
         }
 
@@ -2070,6 +2660,9 @@
                     channelMenu.querySelectorAll('.kp-dd-channel-item').forEach(x => x.classList.remove('active'));
                     item.classList.add('active');
                     channelDd.classList.remove('open');
+                    settings.targetDomain = item.dataset.value;
+                    saveSettings();
+                    showToast(`Канал: ${item.textContent}`);
                 });
             });
         }
@@ -2092,6 +2685,17 @@
                     posDdMenu.querySelectorAll('.kp-dd-pos-item').forEach(x => x.classList.remove('active'));
                     item.classList.add('active');
                     posDd.classList.remove('open');
+                    const pos = CONFIG.POSITIONS[key] || CONFIG.POSITIONS['left-middle'];
+                    settings.btnPosition = pos.left ? 'left' : 'right';
+                    settings.btnVertical = pos.vertical;
+                    settings.embedMode = false;
+                    if (embedToggle) embedToggle.dataset.state = 'off';
+                    if (positionBlock) positionBlock.style.display = 'flex';
+                    saveSettings();
+                    panel.style.display = 'none';
+                    currentUIUrl = null;
+                    createUI();
+                    showToast(`Позиция: ${key}`);
                 });
             });
         }
@@ -2119,23 +2723,6 @@
                 const url = (_updateResult && _updateResult.url) || CONFIG.UPDATE_URL;
                 window.open(url, '_blank', 'noopener');
             }
-        });
-
-        panel.querySelector('#kp-save-settings').addEventListener('click', () => {
-            if (channelDd) settings.targetDomain = channelDd.dataset.value;
-            if (embedToggle) settings.embedMode = embedToggle.dataset.state === 'on';
-            else settings.embedMode = false;
-            if (!settings.embedMode && posDd) {
-                const posKey = posDd.dataset.value;
-                const pos = CONFIG.POSITIONS[posKey] || CONFIG.POSITIONS['left-middle'];
-                settings.btnPosition = pos.left ? 'left' : 'right';
-                settings.btnVertical = pos.vertical;
-            }
-            saveSettings();
-            panel.style.display = 'none';
-            showToast('Настройки сохранены');
-            currentUIUrl = null;
-            createUI();
         });
 
         document.body.appendChild(panel);
