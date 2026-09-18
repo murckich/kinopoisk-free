@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kinopoisk-free
 // @namespace    http://tampermonkey.net/
-// @version      7.5.7
+// @version      7.5.8
 // @description  Бесплатный просмотр фильмом и сериалов на сайте kinopoisk.ru
 // @author       Murckich
 // @icon         https://www.kinopoisk.ru/favicon.ico
@@ -49,8 +49,8 @@
     'use strict';
 
     const LOCAL_META = {
-        version: '7.5.7',
-        date: '15.09.2026'
+        version: '7.5.8',
+        date: '18.09.2026'
     };
 
     const CONFIG = {
@@ -204,7 +204,6 @@
         QR_SERVICE_URL: 'https://api.qrserver.com/v1/create-qr-code/',
         QR_MAX_LENGTH: 2900,
         SAVED_PANEL_WIDTH: '260px',
-        SAVED_LIST_MAX_HEIGHT: '208px',
         PHONE_DELETE_ZONE_WIDTH: '35px',
         DESKTOP_DELETE_ZONE_WIDTH: '22px',
         THEME_CACHE_TTL: 1000,
@@ -213,6 +212,9 @@
         COMMIT_CARD_HEIGHT_DESKTOP: '120px',
         COMMIT_CARD_HEIGHT_PHONE: '100px',
         GETINFO_URL: 'https://habster.sbs/getinfo.php',
+        FILM_PARTS_URL: 'https://habster.sbs/film_parts.php',
+        PARTS_CACHE_TTL: 24 * 60 * 60 * 1000,
+        SIMPLIFIED_VIEW_KEY: 'kpSimplifiedView',
         MOVIE_DETAILS_CACHE_KEY: 'kpMovieDetailsCache',
         MOVIE_DETAILS_CACHE_TTL: 7 * 24 * 60 * 60 * 1000
     };
@@ -239,19 +241,22 @@
     let _onlineListenerAttached = false;
 
     function injectStyleWhenHeadReady(id, css) {
+        if (document.getElementById(id)) return;
         const style = document.createElement('style');
         style.id = id;
         style.textContent = css;
-        if (document.head) {
-            document.head.appendChild(style);
+
+        const host = document.head || document.documentElement;
+        if (host) {
+            host.appendChild(style);
         } else {
-            const headObserver = new MutationObserver(() => {
-                if (document.head) {
-                    headObserver.disconnect();
-                    document.head.appendChild(style);
+            const rootObs = new MutationObserver(() => {
+                if (document.documentElement) {
+                    rootObs.disconnect();
+                    document.documentElement.appendChild(style);
                 }
             });
-            headObserver.observe(document.documentElement, { childList: true });
+            rootObs.observe(document, { childList: true, subtree: true });
         }
     }
 
@@ -584,18 +589,19 @@
 
         setInterval(() => {
             try {
-                deepQueryAll(CONFIG.AD_SELECTORS.join(','))
+                document.querySelectorAll(CONFIG.AD_SELECTORS.join(','))
                     .forEach(el => el.remove());
-                deepQueryAll('div[id]').forEach(d => {
-                    if (d.id.startsWith('kp-')) return;
-                    const style = d.getAttribute('style') || '';
-                    const isFixed = /position\s*:\s*(fixed|absolute)/i.test(style);
-                    if ((AD_ID_RE.test(d.id) || d.hasAttribute('data-mds')) && isFixed) {
-                        d.remove();
-                    }
-                });
+                document.querySelectorAll('html > div[id], body > div[id], body > div > div[id]')
+                    .forEach(d => {
+                        if (d.id.startsWith('kp-')) return;
+                        const style = d.getAttribute('style') || '';
+                        const isFixed = /position\s*:\s*(fixed|absolute)/i.test(style);
+                        if ((AD_ID_RE.test(d.id) || d.hasAttribute('data-mds')) && isFixed) {
+                            d.remove();
+                        }
+                    });
             } catch (e) {}
-        }, 1000);
+        }, 2000);
     }
 
     function isDarkTheme() {
@@ -726,7 +732,6 @@
             }
         }
 
-        // kinopoisk.* с любым TLD (кроме .ru и .film) → Браво
         if (/(^|\.)kinopoisk\.(?!ru([/.]|$)|film([/.]|$))/.test(h)) {
             return CONFIG.CHANNELS.find(c => c.type === 'bravo') || null;
         }
@@ -748,15 +753,33 @@
     }
 
     if (isRebuildMirror || isBlockedPage) {
-        injectStyleWhenHeadReady('kp-hide-body-early', 'body { visibility: hidden !important; }');
-        document.documentElement.style.visibility = 'hidden';
-        document.documentElement.style.background = '#0b0d14';
-    }
-    if (isRebuildMirror) {
-        injectStyleWhenHeadReady('kp-base-bg-mirror', 'html, body { background: #0b0d14 !important; }');
-    }
-    if (isBlockedPage) {
-        injectStyleWhenHeadReady('kp-base-bg', 'html, body { background: #0b0d14 !important; }');
+        const earlyCss = 'html, body { visibility: hidden !important; background-color: #0b0d14 !important; }';
+
+        const applyEarlyHide = () => {
+            if (!document.getElementById('kp-hide-body-early')) {
+                const style = document.createElement('style');
+                style.id = 'kp-hide-body-early';
+                style.textContent = earlyCss;
+                const host = document.head || document.documentElement;
+                if (host) host.insertBefore(style, host.firstChild);
+            }
+            if (document.documentElement) {
+                document.documentElement.style.setProperty('visibility', 'hidden', 'important');
+                document.documentElement.style.setProperty('background-color', '#0b0d14', 'important');
+            }
+            if (document.body) {
+                document.body.style.setProperty('visibility', 'hidden', 'important');
+                document.body.style.setProperty('background-color', '#0b0d14', 'important');
+            }
+        };
+
+        applyEarlyHide();
+
+        (function watchdog() {
+            if (window.__kpBodyReady) return;
+            applyEarlyHide();
+            requestAnimationFrame(watchdog);
+        })();
     }
 
     function getEarlyCleanCSS() {
@@ -764,7 +787,7 @@
         const rules = [];
 
         if (/(^|\.)habster\./.test(h)) {
-            rules.push('.header,.tg-banner,#unreleased-notice,ins,.share-bar,.footer,.info-tabs-bar,#panel-comments,.cw,#rkn-stub,#tgMain,img[src*="tgimg.png"]');
+            rules.push('.domain-notice,.header,.tg-banner,#unreleased-notice,ins,.share-bar,.footer,.info-tabs-bar,#panel-comments,.cw,#rkn-stub,#tgMain,img[src*="tgimg.png"]');
             if (!isBlockedPage) {
                 rules.push('.support-fab, #new-release-notice, #trending-block, .info-section');
             }
@@ -809,8 +832,18 @@
     injectEarlyCleanCSS();
 
     function showBody() {
-        document.documentElement.style.visibility = '';
-        ['kp-hide-body-early', 'kp-base-bg-mirror', 'kp-base-bg', 'kp-hide-body'].forEach(id => document.getElementById(id)?.remove());
+        window.__kpBodyReady = true;
+        if (document.documentElement) {
+            document.documentElement.style.removeProperty('visibility');
+            document.documentElement.style.removeProperty('background-color');
+        }
+        if (document.body) {
+            document.body.style.removeProperty('visibility');
+            document.body.style.removeProperty('background-color');
+        }
+        ['kp-hide-body-early', 'kp-base-bg-mirror', 'kp-base-bg', 'kp-hide-body'].forEach(
+            id => document.getElementById(id)?.remove()
+        );
     }
 
     function releaseBodyForSimpleMirrors() {
@@ -820,6 +853,8 @@
     }
     releaseBodyForSimpleMirrors();
 
+    try { localStorage.removeItem('kpPartsCache'); } catch (e) {}
+
     const ALFA_STYLES_GAMMA_TANGO = `
         :root {
             --bg: #0b0d14; --bg-card: #131620; --bg-elev: #1a1e2e;
@@ -828,7 +863,16 @@
             --border: #1e2235; --radius: 14px; --gold: #fbbf24;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        html, body { background: var(--bg) !important; color: var(--text); font-family: system-ui, sans-serif; overflow-y: auto; margin: 0; }
+        html, body {
+            background: var(--bg) !important;
+            color: var(--text);
+            font-family: system-ui, sans-serif;
+            margin: 0;
+            overflow-y: auto !important;
+            overflow-x: hidden !important;
+            height: auto !important;
+            min-height: 100% !important;
+        }
         body::before { content: ''; position: fixed; inset: 0; background-image: radial-gradient(circle at 1px 1px, rgba(99,102,241,0.05) 1px, transparent 0); background-size: 30px 30px; pointer-events: none; z-index: 0; }
         #kp-alfa-page { position: relative; z-index: 1; max-width: 1200px; margin: 0 auto; padding: 1.25rem; }
         .player-section { background: var(--bg-card); border: 1px solid var(--border); border-radius: 18px; margin-bottom: 1.25rem; }
@@ -852,8 +896,7 @@
         .kinobox_iframe_container, .kinobox__iframeWrapper { position: relative; padding-top: 56.25% !important; }
         .kinobox_iframe, .kinobox__iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: none; border-radius: 12px; background: #000; }
         .movie-info { padding: 1.5rem; }
-        .movie-info-inner { display: flex; gap: 1.5rem; }
-        @media (max-width: 600px) { .movie-info-inner { flex-direction: column; } }
+        .movie-info-inner { display: flex; gap: 1.5rem; align-items: flex-start; }
         .movie-poster-wrap { flex-shrink: 0; width: 130px; }
         .movie-poster-img { width: 100%; border-radius: 10px; display: block; background: var(--bg-elev); }
         .movie-details { flex: 1; min-width: 0; }
@@ -867,10 +910,104 @@
         .movie-row { font-size: 0.85rem; }
         .movie-row-label { color: var(--dim); }
         .movie-row-val { color: var(--text); }
-        .movie-desc { font-size: 0.88rem; color: var(--muted); line-height: 1.65; border-top: 1px solid var(--border); padding-top: 0.9rem; margin-top: 0.5rem; }
+        .movie-desc { font-size: 0.88rem; color: var(--muted); line-height: 1.65; border-top: 1px solid var(--border); padding-top: 0.9rem; margin-top: 1rem; }
+        @media (max-width: 600px) {
+            .movie-info { padding: 1rem; }
+            .movie-info-inner { gap: 0.85rem; }
+            .movie-poster-wrap { width: 100px; }
+            .movie-title { font-size: 1.1rem; }
+            .movie-orig { font-size: 0.8rem; margin-bottom: 0.6rem; }
+            .movie-meta { gap: 0.35rem; margin-bottom: 0.75rem; }
+            .meta-tag { font-size: 0.7rem; padding: 0.18rem 0.5rem; }
+            .movie-rows { gap: 0.25rem; margin-bottom: 0.5rem; }
+            .movie-row { font-size: 0.78rem; }
+            .movie-desc { font-size: 0.82rem; line-height: 1.55; margin-top: 0.85rem; padding-top: 0.75rem; }
+        }
         .kinobox_loader, .kinobox_menu_button, .kbt_select, .kbt_button, .kinobox__loaderWrapper, .kinobox__loader { display: none !important; }
         .kp-torrent-btn { display: inline-flex; align-items: center; padding: 0.42rem 0.85rem; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 9px; color: var(--accent); font-size: 0.84rem; text-decoration: none; transition: background 0.15s, border-color 0.15s; white-space: nowrap; }
         .kp-torrent-btn:hover { background: rgba(99,102,241,0.1); border-color: rgba(99,102,241,0.3); color: var(--text); }
+
+        .parts-block { display: none; padding: 1.25rem; border-top: 1px solid var(--border); }
+        .parts-block.visible { display: block; }
+        .parts-title { font-size: 0.95rem; font-weight: 600; margin-bottom: 0.85rem; }
+        .parts-strip { display: flex; gap: 0.75rem; overflow-x: auto; padding-bottom: 0.3rem; scrollbar-width: thin; }
+        .parts-card { flex: 0 0 auto; width: 108px; text-decoration: none; color: var(--text); display: flex; flex-direction: column; gap: 0.4rem; }
+        .parts-poster-wrap { position: relative; width: 108px; height: 156px; border-radius: 10px; overflow: hidden; background: var(--bg-elev); border: 1px solid var(--border); }
+        .parts-card.current .parts-poster-wrap { border: 2px solid var(--accent); }
+        .parts-poster-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .parts-badge { position: absolute; top: 6px; right: 6px; background: var(--accent); color: #fff; font-size: 0.65rem; font-weight: 600; padding: 0.15rem 0.4rem; border-radius: 6px; }
+        .parts-year { font-size: 0.72rem; color: var(--dim); }
+        .parts-name { font-size: 0.78rem; line-height: 1.3; color: var(--text); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+        .parts-card.current .parts-name { color: var(--accent); font-weight: 600; }
+
+        .view-toggle-wrap { display: contents; }
+        .view-toggle {
+            position: fixed;
+            top: calc(58px + 0.75rem);
+            right: 0.75rem;
+            z-index: 550;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            padding: 0.4rem 0.65rem 0.4rem 0.85rem;
+            box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+            transition: top 0.2s;
+        }
+        .view-toggle-text { display: flex; flex-direction: column; gap: 0.15rem; flex: 1 1 auto; min-width: 0; }
+        .view-toggle-label { font-size: 0.72rem; color: var(--muted); font-weight: 500; white-space: nowrap; }
+        .view-toggle-desc { display: none; font-size: 0.68rem; color: var(--dim); font-weight: 400; line-height: 1.35; }
+        body.simplified-view .view-toggle-desc { display: block; }
+        .view-toggle-switch { position: relative; width: 34px; height: 19px; flex-shrink: 0; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 999px; cursor: pointer; transition: background 0.2s, border-color 0.2s; }
+        .view-toggle-switch.on { background: var(--accent); border-color: var(--accent); }
+        .view-toggle-knob { position: absolute; top: 1px; left: 1px; width: 15px; height: 15px; background: #fff; border-radius: 50%; transition: transform 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+        .view-toggle-switch.on .view-toggle-knob { transform: translateX(15px); }
+        @media (max-width: 560px) { .view-toggle { top: calc(58px + 0.5rem); right: 0.5rem; padding: 0.35rem 0.55rem 0.35rem 0.7rem; } .view-toggle-label { font-size: 0.66rem; } }
+
+        body.simplified-view { overflow-y: auto !important; overflow-x: hidden !important; height: auto !important; min-height: 100vh !important; }
+        body.simplified-view #kp-alfa-page {
+            max-width: 100%;
+            margin: 0;
+            padding: 0.5rem;
+            padding-bottom: 2rem;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            gap: 0.5rem;
+            box-sizing: border-box;
+        }
+        body.simplified-view #kp-alfa-page .movie-info,
+        body.simplified-view #kp-alfa-page .parts-block,
+        body.simplified-view #kp-alfa-page #kp-movie-info,
+        body.simplified-view #kp-alfa-page #parts-block { display: none !important; }
+        body.simplified-view #kp-alfa-page .player-section { margin: 0 !important; flex-shrink: 0; }
+        body.simplified-view #kp-alfa-page::after {
+            content: "";
+            display: block;
+            width: 100%;
+            height: 400px;
+            flex-shrink: 0;
+        }
+        body.simplified-view .view-toggle-wrap { display: block; margin-bottom: 0.5rem; }
+        body.simplified-view .view-toggle {
+            position: static;
+            top: auto;
+            right: auto;
+            width: 100%;
+            padding: 0.85rem 1rem;
+            border-radius: 14px;
+            border-color: var(--accent);
+            background: linear-gradient(135deg, rgba(99,102,241,0.16), rgba(124,58,237,0.1));
+            box-shadow: 0 6px 20px rgba(99,102,241,0.18);
+            box-sizing: border-box;
+        }
+        body.simplified-view .view-toggle-label { font-size: 0.9rem; color: var(--text); font-weight: 600; }
+        body.simplified-view .view-toggle-switch { width: 42px; height: 24px; }
+        body.simplified-view .view-toggle-knob { width: 19px; height: 19px; }
+        body.simplified-view .view-toggle-switch.on .view-toggle-knob { transform: translateX(18px); }
     `;
 
     const BLOCKED_PAGE_STYLES = `
@@ -970,224 +1107,59 @@
         .kp-update-actions .kp-btn-primary.warn { background: #c47d2a; }
 
         .kp-saved-panel {
-            --kp-bg: #f5f5f5;
-            --kp-text: #1a1a1a;
-            --kp-border: rgba(0,0,0,0.1);
-            --kp-tab-bg: rgba(0,0,0,0.05);
-            --kp-tab-border: rgba(0,0,0,0.1);
-            --kp-tab-color: rgba(0,0,0,0.7);
-            --kp-tab-active-bg: rgba(99,102,241,0.15);
-            --kp-tab-active-border: #6366f1;
-            --kp-tab-active-color: #4f46e5;
-            --kp-action-bg: rgba(255,255,255,0.75);
-            --kp-action-border: rgba(0,0,0,0.1);
-            --kp-action-color: rgba(0,0,0,0.75);
-            --kp-action-hover-bg: rgba(99,102,241,0.15);
-            --kp-action-hover-color: #4f46e5;
-            --kp-menu-bg: #ffffff;
-            --kp-menu-border: rgba(0,0,0,0.1);
-            --kp-input-bg: rgba(0,0,0,0.04);
-            --kp-input-color: #1a1a1a;
-            --kp-input-border: rgba(0,0,0,0.15);
-            --kp-muted: #64748b;
-            --kp-menu-item-hover: rgba(0,0,0,0.06);
-            --kp-menu-item-color: rgba(0,0,0,0.8);
-            --kp-menu-item-active-bg: rgba(99,102,241,0.12);
-            --kp-menu-item-active-color: #4f46e5;
-
-            position: absolute;
-            z-index: 1000001;
-            background: var(--kp-bg);
-            color: var(--kp-text);
-            font-family: 'Segoe UI', Arial, sans-serif;
-            font-size: 13px;
-            width: 260px !important;
-            max-width: calc(100vw - 24px);
-            display: none;
-            flex-direction: column;
-            border-radius: 20px;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.15);
-            box-sizing: border-box;
+            --kp-bg: #f5f5f5; --kp-text: #1a1a1a; --kp-border: rgba(0,0,0,0.1);
+            --kp-tab-bg: rgba(0,0,0,0.05); --kp-tab-border: rgba(0,0,0,0.1); --kp-tab-color: rgba(0,0,0,0.7);
+            --kp-tab-active-bg: rgba(99,102,241,0.15); --kp-tab-active-border: #6366f1; --kp-tab-active-color: #4f46e5;
+            --kp-action-bg: rgba(255,255,255,0.75); --kp-action-border: rgba(0,0,0,0.1); --kp-action-color: rgba(0,0,0,0.75);
+            --kp-action-hover-bg: rgba(99,102,241,0.15); --kp-action-hover-color: #4f46e5;
+            --kp-menu-bg: #ffffff; --kp-menu-border: rgba(0,0,0,0.1);
+            --kp-input-bg: rgba(0,0,0,0.04); --kp-input-color: #1a1a1a; --kp-input-border: rgba(0,0,0,0.15);
+            --kp-muted: #64748b; --kp-menu-item-hover: rgba(0,0,0,0.06); --kp-menu-item-color: rgba(0,0,0,0.8);
+            --kp-menu-item-active-bg: rgba(99,102,241,0.12); --kp-menu-item-active-color: #4f46e5;
+            position: absolute; z-index: 1000001; background: var(--kp-bg); color: var(--kp-text);
+            font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px; width: 260px !important;
+            max-width: calc(100vw - 24px); display: none; flex-direction: column; border-radius: 20px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.15); box-sizing: border-box;
         }
         .kp-saved-panel[data-theme="dark"] {
-            --kp-bg: #1f1f1f;
-            --kp-text: #ffffff;
-            --kp-border: rgba(127,127,127,0.15);
-            --kp-tab-bg: rgba(127,127,127,0.12);
-            --kp-tab-border: rgba(127,127,127,0.2);
-            --kp-tab-color: rgba(255,255,255,0.75);
-            --kp-tab-active-bg: rgba(99,102,241,0.2);
-            --kp-tab-active-border: #818cf8;
-            --kp-tab-active-color: #a5b4fc;
-            --kp-action-bg: rgba(31,31,31,0.55);
-            --kp-action-border: rgba(127,127,127,0.25);
-            --kp-action-color: rgba(255,255,255,0.85);
-            --kp-action-hover-bg: rgba(99,102,241,0.35);
-            --kp-action-hover-color: #ffffff;
-            --kp-menu-bg: #1f1f1f;
-            --kp-menu-border: rgba(127,127,127,0.3);
-            --kp-input-bg: rgba(0,0,0,0.3);
-            --kp-input-color: #ffffff;
-            --kp-input-border: rgba(127,127,127,0.3);
-            --kp-muted: #64748b;
-            --kp-menu-item-hover: rgba(127,127,127,0.15);
-            --kp-menu-item-color: rgba(255,255,255,0.8);
-            --kp-menu-item-active-bg: rgba(99,102,241,0.15);
-            --kp-menu-item-active-color: #a5b4fc;
+            --kp-bg: #1f1f1f; --kp-text: #ffffff; --kp-border: rgba(127,127,127,0.15);
+            --kp-tab-bg: rgba(127,127,127,0.12); --kp-tab-border: rgba(127,127,127,0.2); --kp-tab-color: rgba(255,255,255,0.75);
+            --kp-tab-active-bg: rgba(99,102,241,0.2); --kp-tab-active-border: #818cf8; --kp-tab-active-color: #a5b4fc;
+            --kp-action-bg: rgba(31,31,31,0.55); --kp-action-border: rgba(127,127,127,0.25); --kp-action-color: rgba(255,255,255,0.85);
+            --kp-action-hover-bg: rgba(99,102,241,0.35); --kp-action-hover-color: #ffffff;
+            --kp-menu-bg: #1f1f1f; --kp-menu-border: rgba(127,127,127,0.3);
+            --kp-input-bg: rgba(0,0,0,0.3); --kp-input-color: #ffffff; --kp-input-border: rgba(127,127,127,0.3);
+            --kp-muted: #64748b; --kp-menu-item-hover: rgba(127,127,127,0.15); --kp-menu-item-color: rgba(255,255,255,0.8);
+            --kp-menu-item-active-bg: rgba(99,102,241,0.15); --kp-menu-item-active-color: #a5b4fc;
         }
-
-        .kp-saved-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 6px;
-            padding: 4px 10px 4px;
-            border-bottom: 1px solid var(--kp-border);
-            flex-shrink: 0;
-            border-radius: 20px 20px 0 0;
-            background: var(--kp-bg);
-            box-sizing: border-box;
-        }
+        .kp-saved-header { display: flex; justify-content: space-between; align-items: center; gap: 6px; padding: 4px 10px 4px; border-bottom: 1px solid var(--kp-border); flex-shrink: 0; border-radius: 20px 20px 0 0; background: var(--kp-bg); box-sizing: border-box; }
         .kp-saved-title { font-weight: 600; font-size: 13px; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--kp-text); }
         .kp-saved-actions { display: flex; gap: 4px; align-items: center; flex-shrink: 0; position: relative; }
-        .kp-saved-btn {
-            background: #427552;
-            border: none;
-            color: #fff;
-            padding: 0 8px;
-            height: 22px;
-            border-radius: 14px;
-            font-size: 12px;
-            cursor: pointer;
-            font-weight: 600;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 4px;
-            font-family: inherit;
-            transition: opacity 0.15s;
-            box-sizing: border-box;
-            line-height: 1;
-            touch-action: manipulation;
-            -webkit-tap-highlight-color: transparent;
-        }
-        @media (max-width: 500px) {
-            .kp-saved-btn { height: 30px; font-size: 13px; }
-        }
+        .kp-saved-btn { background: #427552; border: none; color: #fff; padding: 0 8px; height: 22px; border-radius: 14px; font-size: 12px; cursor: pointer; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; gap: 4px; font-family: inherit; transition: opacity 0.15s; box-sizing: border-box; line-height: 1; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+        @media (max-width: 500px) { .kp-saved-btn { height: 30px; font-size: 13px; } }
         .kp-saved-btn:hover { opacity: 0.9; }
         .kp-saved-btn.icon-only { padding: 0 8px; }
 
-        .kp-tabs-bar {
-            position: relative;
-            display: flex;
-            align-items: center;
-            padding: 4px 0;
-            border-bottom: 1px solid var(--kp-border);
-            flex-shrink: 0;
-            width: 100%;
-            box-sizing: border-box;
-        }
-        .kp-tabs-scroll {
-            display: flex;
-            gap: 4px;
-            overflow-x: auto;
-            overflow-y: hidden;
-            width: 100%;
-            padding: 0 10px;
-            padding-right: 80px;
-            scrollbar-width: none;
-            -ms-overflow-style: none;
-            -webkit-overflow-scrolling: touch;
-            box-sizing: border-box;
-        }
+        .kp-tabs-bar { position: relative; display: flex; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--kp-border); flex-shrink: 0; width: 100%; box-sizing: border-box; }
+        .kp-tabs-scroll { display: flex; gap: 4px; overflow-x: auto; overflow-y: hidden; width: 100%; padding: 0 10px; padding-right: 80px; scrollbar-width: none; -ms-overflow-style: none; -webkit-overflow-scrolling: touch; box-sizing: border-box; }
         .kp-tabs-scroll::-webkit-scrollbar { display: none; }
 
-        .kp-tab {
-            position: relative;
-            flex-shrink: 0;
-            display: inline-flex;
-            align-items: center;
-            justify-content: flex-start;
-            height: 22px;
-            padding: 0 10px;
-            background: var(--kp-tab-bg);
-            border: 1px solid var(--kp-tab-border);
-            border-radius: 14px;
-            font-size: 13px;
-            font-weight: 600;
-            line-height: 22px;
-            color: var(--kp-tab-color);
-            cursor: pointer;
-            user-select: none;
-            white-space: nowrap;
-            transition: background 0.15s, border-color 0.15s, color 0.15s;
-            -webkit-tap-highlight-color: transparent;
-            max-width: 135px;
-            overflow: hidden;
-            box-sizing: border-box;
-        }
-        @media (max-width: 500px) {
-            .kp-tab { height: 30px; line-height: 30px; padding: 0 10px; }
-        }
+        .kp-tab { position: relative; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: flex-start; height: 22px; padding: 0 10px; background: var(--kp-tab-bg); border: 1px solid var(--kp-tab-border); border-radius: 14px; font-size: 13px; font-weight: 600; line-height: 22px; color: var(--kp-tab-color); cursor: pointer; user-select: none; white-space: nowrap; transition: background 0.15s, border-color 0.15s, color 0.15s; -webkit-tap-highlight-color: transparent; max-width: 135px; overflow: hidden; box-sizing: border-box; }
+        @media (max-width: 500px) { .kp-tab { height: 30px; line-height: 30px; padding: 0 10px; } }
         .kp-tab:hover { background: var(--kp-menu-item-hover); color: var(--kp-text); }
-        .kp-tab.active {
-            background: var(--kp-tab-active-bg);
-            border-color: var(--kp-tab-active-border);
-            color: var(--kp-tab-active-color);
-        }
-        .kp-tab > span {
-            display: block;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            max-width: 100%;
-            line-height: inherit;
-            text-align: left;
-        }
+        .kp-tab.active { background: var(--kp-tab-active-bg); border-color: var(--kp-tab-active-border); color: var(--kp-tab-active-color); }
+        .kp-tab > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; line-height: inherit; text-align: left; }
 
-        .kp-tabs-actions {
-            position: absolute;
-            right: 10px;
-            top: 50%;
-            transform: translateY(-50%);
-            display: flex;
-            gap: 4px;
-            z-index: 10;
-            pointer-events: none;
-        }
+        .kp-tabs-actions { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); display: flex; gap: 4px; z-index: 10; pointer-events: none; }
         .kp-tabs-actions > * { pointer-events: auto; }
-        .kp-tab-action-btn {
-            height: 22px;
-            padding: 0 8px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            background: var(--kp-action-bg);
-            border: 1px solid var(--kp-action-border);
-            border-radius: 14px;
-            color: var(--kp-action-color);
-            cursor: pointer;
-            transition: background 0.15s, color 0.15s, border-color 0.15s;
-            -webkit-tap-highlight-color: transparent;
-            backdrop-filter: blur(4px);
-            -webkit-backdrop-filter: blur(4px);
-            box-sizing: border-box;
-        }
-        @media (max-width: 500px) {
-            .kp-tab-action-btn { height: 30px; }
-        }
-        .kp-tab-action-btn:hover {
-            background: var(--kp-action-hover-bg);
-            color: var(--kp-action-hover-color);
-        }
+        .kp-tab-action-btn { height: 22px; padding: 0 8px; display: inline-flex; align-items: center; justify-content: center; background: var(--kp-action-bg); border: 1px solid var(--kp-action-border); border-radius: 14px; color: var(--kp-action-color); cursor: pointer; transition: background 0.15s, color 0.15s, border-color 0.15s; -webkit-tap-highlight-color: transparent; backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); box-sizing: border-box; }
+        @media (max-width: 500px) { .kp-tab-action-btn { height: 30px; } }
+        .kp-tab-action-btn:hover { background: var(--kp-action-hover-bg); color: var(--kp-action-hover-color); }
         .kp-tab-action-btn svg { display: block; }
 
         .kp-saved-panel.share-open .kp-tabs-actions { display: none; }
         .kp-saved-panel.share-open .kp-tabs-scroll { padding-right: 10px; }
-
-        @media (max-width: 500px) {
-            .kp-tabs-scroll { padding-right: 86px; }
-        }
+        @media (max-width: 500px) { .kp-tabs-scroll { padding-right: 86px; } }
 
         .kp-sort-wrap { position: relative; }
         .kp-sort-menu { position: absolute; top: calc(100% + 6px); right: 0; min-width: 230px; background: var(--kp-menu-bg); border: 1px solid var(--kp-menu-border); border-radius: 20px; padding: 4px; z-index: 1000; box-shadow: 0 8px 24px rgba(0,0,0,0.6); display: none; color: var(--kp-text); }
@@ -1685,6 +1657,102 @@
         }
     }
 
+    async function loadAndRenderParts(kpId) {
+        if (!kpId || kpId === '0') return;
+        const strip = document.getElementById('parts-strip');
+        const block = document.getElementById('parts-block');
+        if (!strip || !block) return;
+
+        const cacheKey = 'kpParts_' + kpId;
+        const now = Date.now();
+        let parts = null;
+        let fromCache = false;
+
+        try {
+            const raw = localStorage.getItem(cacheKey);
+            if (raw) {
+                const entry = JSON.parse(raw);
+                if (entry && (now - entry.ts) < CONFIG.PARTS_CACHE_TTL) {
+                    parts = entry.parts;
+                    fromCache = true;
+                }
+            }
+        } catch (e) {}
+
+        if (!parts) {
+            try {
+                const url = CONFIG.FILM_PARTS_URL + '?kp_id=' + encodeURIComponent(kpId);
+                const res = await gmFetch(url, { timeout: 8000 });
+                if (!res.ok) return;
+                const text = res.responseText || '';
+                try {
+                    const data = JSON.parse(text);
+                    if (Array.isArray(data)) parts = data;
+                    else if (data && Array.isArray(data.parts)) parts = data.parts;
+                } catch (e) {}
+                if (!parts && text && /parts-card/.test(text)) {
+                    strip.innerHTML = text;
+                    block.classList.add('visible');
+                    return;
+                }
+            } catch (e) {
+                return;
+            }
+        }
+
+        if (parts && parts.length) {
+            strip.innerHTML = parts.map(p => {
+                const id = encodeURIComponent(p.kp_id || p.id || '');
+                const poster = `https://kinopoiskapiunofficial.tech/images/posters/kp_small/${id}.jpg`;
+                const cur = p.current ? ' current' : '';
+                const year = p.year ? `<div class="parts-year">${escapeHtml(String(p.year))}</div>` : '';
+                const badge = p.current ? '<span class="parts-badge">Вы здесь</span>' : '';
+                return `<a class="parts-card${cur}" href="/film/${id}/">
+                    <div class="parts-poster-wrap">
+                        <img src="${poster}" alt="" loading="lazy">
+                        ${badge}
+                    </div>
+                    ${year}
+                    <div class="parts-name">${escapeHtml(p.name || '')}</div>
+                </a>`;
+            }).join('');
+            block.classList.add('visible');
+        }
+
+        if (parts && parts.length && !fromCache) {
+            setTimeout(() => {
+                try {
+                    localStorage.setItem(cacheKey, JSON.stringify({ ts: now, parts }));
+                } catch (e) {}
+            }, 0);
+        }
+    }
+
+    function initViewToggle() {
+        const toggle = document.getElementById('viewToggle');
+        const sw = document.getElementById('viewToggleSwitch');
+        if (!toggle || !sw) return;
+        let simplified = false;
+        try { simplified = localStorage.getItem(CONFIG.SIMPLIFIED_VIEW_KEY) === '1'; } catch (e) {}
+        function apply() {
+            document.body.classList.toggle('simplified-view', simplified);
+            sw.classList.toggle('on', !simplified);
+        }
+        apply();
+        sw.addEventListener('click', () => {
+            simplified = !simplified;
+            try { localStorage.setItem(CONFIG.SIMPLIFIED_VIEW_KEY, simplified ? '1' : '0'); } catch (e) {}
+            apply();
+        });
+    }
+
+    function preapplySimplifiedClass() {
+        try {
+            const simplified = localStorage.getItem(CONFIG.SIMPLIFIED_VIEW_KEY) === '1';
+            document.body.classList.toggle('simplified-view', simplified);
+        } catch (e) {}
+    }
+
     function renderMovieInfoBlock(movie, details, posterSrc) {
         const name = (details && (details.nameRu || details.nameOriginal)) || (movie && movie.name) || '';
         const original = (details && details.nameOriginal) || '';
@@ -1737,9 +1805,9 @@
                     ${origLine}
                     <div class="movie-meta">${metaTags}</div>
                     <div class="movie-rows">${rows}</div>
-                    ${descLine}
                 </div>
             </div>
+            ${descLine}
         `;
     }
 
@@ -1776,6 +1844,19 @@
         container.innerHTML = `
             <div class="movie-info" id="kp-movie-info">
                 ${renderMovieInfoBlock(movie, null, posterSrc)}
+            </div>
+            <div class="parts-block" id="parts-block">
+                <div class="parts-title">Другие части</div>
+                <div class="parts-strip" id="parts-strip"></div>
+            </div>
+            <div class="view-toggle-wrap">
+                <div class="view-toggle" id="viewToggle">
+                    <span class="view-toggle-text">
+                        <span class="view-toggle-label">Расширенная версия сайта</span>
+                        <span class="view-toggle-desc">Полная информация о фильме и другие функции сервиса</span>
+                    </span>
+                    <span class="view-toggle-switch on" id="viewToggleSwitch"><span class="view-toggle-knob"></span></span>
+                </div>
             </div>
             <div class="player-section">
                 <div class="player-top-bar">
@@ -1830,9 +1911,13 @@
         selectTrigger.addEventListener('click', (e) => { e.stopPropagation(); selectEl.classList.toggle('open'); });
 
         document.body.innerHTML = '';
+        preapplySimplifiedClass();
         document.body.appendChild(container);
         addStylesIfNeeded();
         showBody();
+
+        initViewToggle();
+        if (kpId && kpId !== '0') loadAndRenderParts(kpId);
 
         let _currentMovie = movie || {};
         let _currentDetails = null;
@@ -1889,6 +1974,19 @@
             <div class="movie-info" id="kp-movie-info">
                 ${renderMovieInfoBlock(movie, null, posterSrc)}
             </div>
+            <div class="parts-block" id="parts-block">
+                <div class="parts-title">Другие части</div>
+                <div class="parts-strip" id="parts-strip"></div>
+            </div>
+            <div class="view-toggle-wrap">
+                <div class="view-toggle" id="viewToggle">
+                    <span class="view-toggle-text">
+                        <span class="view-toggle-label">Расширенная версия сайта</span>
+                        <span class="view-toggle-desc">Полная информация о фильме и другие функции сервиса</span>
+                    </span>
+                    <span class="view-toggle-switch on" id="viewToggleSwitch"><span class="view-toggle-knob"></span></span>
+                </div>
+            </div>
             <div class="player-section">
                 <div class="player-top-bar"></div>
                 <div class="vpn-warning"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>Плеер можно выбрать другой, нажмите на список</div>
@@ -1909,9 +2007,13 @@
         }
 
         document.body.innerHTML = '';
+        preapplySimplifiedClass();
         document.body.appendChild(container);
         addStylesIfNeeded();
         showBody();
+
+        initViewToggle();
+        if (kpId && kpId !== '0') loadAndRenderParts(kpId);
 
         let _currentMovie = movie || {};
         let _currentDetails = null;
@@ -3720,6 +3822,7 @@
             currentUIUrl = null;
             invalidateThemeCache();
             _movieDataCache = { id: null, data: null, ts: 0 };
+            window.__kpBodyReady = false;
             if (isRebuildMirror && !isBlockedPage) waitForRebuild();
             else if (isMirrorDomain() && !isBlockedPage) { if (isHabster) showBody(); }
             else if (!isBlockedPage) { themeWaitActive = false; waitForThemeAndCreateUI(); }
@@ -3736,9 +3839,32 @@
     history.replaceState = function(...args) { origReplaceState.apply(this, args); checkUrlChange(); };
     window.addEventListener('popstate', checkUrlChange);
 
-    const titleObserver = new MutationObserver(checkUrlChange);
-    const titleElement = document.querySelector('title');
-    if (titleElement) titleObserver.observe(titleElement, { childList: true });
+    let _titleObserver = null;
+    let _observedTitleEl = null;
+    let _lastDocTitle = document.title;
+    function ensureTitleObserver() {
+        const t = document.querySelector('title');
+        if (!t) return;
+        if (t === _observedTitleEl && _titleObserver) return;
+        if (_titleObserver) _titleObserver.disconnect();
+        _observedTitleEl = t;
+        _titleObserver = new MutationObserver(() => {
+            if (document.title !== _lastDocTitle) {
+                _lastDocTitle = document.title;
+                checkUrlChange();
+            }
+        });
+        _titleObserver.observe(t, { childList: true, characterData: true, subtree: true });
+    }
+    ensureTitleObserver();
+
+    (function patchCheckUrlChange() {
+        const original = checkUrlChange;
+        checkUrlChange = function() {
+            original.apply(this, arguments);
+            ensureTitleObserver();
+        };
+    })();
 
     if (!isBlockedPage) {
         if (isRebuildMirror) waitForRebuild();
