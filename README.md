@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="images/icon-kp-bw-inv.svg" alt="Кинопоиск [Free]" width="180">
+  <img src="images/KF.png" alt="Кинопоиск [Free]" width="250">
 </p>
 
 <h1 align="center">Кинопоиск [Free]</h1>
