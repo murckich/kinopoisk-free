@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kinopoisk-free
 // @namespace    http://tampermonkey.net/
-// @version      7.5.8
+// @version      7.5.9
 // @description  Бесплатный просмотр фильмом и сериалов на сайте kinopoisk.ru
 // @author       Murckich
 // @icon         https://www.kinopoisk.ru/favicon.ico
@@ -49,8 +49,8 @@
     'use strict';
 
     const LOCAL_META = {
-        version: '7.5.8',
-        date: '18.09.2026'
+        version: '7.5.9',
+        date: '20.09.2026'
     };
 
     const CONFIG = {
@@ -747,6 +747,75 @@
     const isBlockedPage = /^\/blocked\.html(\/|$)/.test(window.location.pathname);
     const isHabster = /(^|\.)habster\./.test(host);
     const isRebuildMirror = matchChannelDomain(host) && !isHabster;
+
+    // ── Убиваем render-blocking CSS на rebuild-зеркалах ──
+    // Эти файлы тормозят отрисовку страницы (белый экран 19с).
+    // Удаляем <link> из DOM как можно раньше, чтобы браузер не блокировал пейнт.
+    if (isRebuildMirror) {
+        (function killBlockingCss() {
+            const re = /\/kinobox\/kinobox\.css(\?|$)|\/modalinst\.css(\?|$)/i;
+
+            const kill = (el) => {
+                if (!el || el.nodeType !== 1) return;
+                if (el.tagName !== 'LINK') return;
+                const href = el.getAttribute('href') || '';
+                if (!re.test(href)) return;
+                // Сначала делаем non-render-blocking
+                try { el.setAttribute('media', 'not all'); } catch (e) {}
+                // Потом удаляем из DOM (снимает блокировку пейнта)
+                try { el.remove(); } catch (e) {}
+            };
+
+            const scan = (root) => {
+                if (!root || root.nodeType !== 1) return;
+                if (root.tagName === 'LINK') kill(root);
+                try { root.querySelectorAll && root.querySelectorAll('link').forEach(kill); } catch (e) {}
+            };
+
+            // На случай, если что-то уже успело появиться до нас
+            scan(document);
+            scan(document.documentElement);
+
+            // Повторные проходы — страховка от гонки на старте.
+            // Если скрипт запустился ПОЗЖЕ, чем браузер увидел <link>,
+            // MutationObserver уже не поможет — но повторный scan закроет дыру.
+            let _scanAttempts = 0;
+            const _scanTick = () => {
+                if (_scanAttempts++ > 20) return;      // ~2 секунды суммарно
+                scan(document);
+                requestAnimationFrame(_scanTick);
+            };
+            requestAnimationFrame(_scanTick);
+
+            // Плюс финальная зачистка через DOMContentLoaded — самая надёжная точка
+            document.addEventListener('DOMContentLoaded', () => {
+                scan(document);
+                // И ещё раз через 100мс, если что-то доехало позже
+                setTimeout(() => scan(document), 100);
+            }, { once: true });
+
+            // И по полной загрузке окна — на всякий случай
+            window.addEventListener('load', () => scan(document), { once: true });
+
+            // Ловим всё новое — как только HTML-парсер добавит <link>
+            try {
+                new MutationObserver((muts) => {
+                    for (const m of muts) {
+                        if (m.type === 'childList') {
+                            m.addedNodes.forEach(scan);
+                        } else if (m.type === 'attributes' && m.target) {
+                            kill(m.target);
+                        }
+                    }
+                }).observe(document, {
+                    childList: true,
+                    subtree: true,
+                    attributes: true,
+                    attributeFilter: ['href', 'media']
+                });
+            } catch (e) {}
+        })();
+    }
 
     if (matchChannelDomain(host)) {
         try { injectAdCleaner(); } catch (e) { console.warn('kp-ad-cleaner:', e); }
