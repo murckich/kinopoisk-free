@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         kinopoisk-free
 // @namespace    http://tampermonkey.net/
-// @version      7.5.9
+// @version      7.6.0
 // @description  Бесплатный просмотр фильмом и сериалов на сайте kinopoisk.ru
 // @author       Murckich
 // @icon         https://www.kinopoisk.ru/favicon.ico
@@ -10,6 +10,7 @@
 // @match        https://kinopoisk.ru/*
 // @match        http://kinopoisk.ru/*
 // @include      /^https?:\/\/([^/]*\.)?habster\./
+// @include      /^https?:\/\/([^/]*\.)?fixtyflux\./
 // @include      /^https?:\/\/([^/]*\.)?fbfind\./
 // @include      /^https?:\/\/([^/]*\.)?brogiro\./
 // @include      /^https?:\/\/([^/]*\.)?kinokino\./
@@ -49,8 +50,8 @@
     'use strict';
 
     const LOCAL_META = {
-        version: '7.5.9',
-        date: '20.09.2026'
+        version: '7.6.0',
+        date: '05.10.2026'
     };
 
     const CONFIG = {
@@ -67,7 +68,7 @@
             { brand: ['fbfind'],                                               type: 'gamma', domain: 'fbfind.online',    name: 'Гамма',  domains: ['fbfind.online', 'fbfind.top', 'fbfind.life', 'kinopoisk.film'] },
             { brand: ['brogiro', 'kinokino', 'villybizy'],                     type: 'gamma', domain: 'brogiro.cfd',      name: 'Дельта', domains: ['brogiro.cfd', 'kinokino.vip', 'villybizy.online'] },
             { brand: ['flcksbr'],                                              type: 'tango', domain: 'flcksbr.top',      name: 'Танго',  domains: ['flcksbr.top'] },
-            { brand: ['gromfaer', 'sspoisk'],                                  type: 'gamma', domain: 'www.gromfaer.top', name: 'Чарли',  domains: ['www.gromfaer.top', 'gromfaer.top', 'sspoisk.ru', 'www.sspoisk.ru'] }
+            { brand: ['gromfaer', 'fixtyflux', 'sspoisk'],                     type: 'gamma', domain: 'fixtyflux.cfd',    name: 'Чарли',  domains: ['fixtyflux', 'www.gromfaer.top', 'gromfaer.top', 'sspoisk.ru', 'www.sspoisk.ru'] }
         ],
         BTN_SIZE: 52,
         SETTINGS_BTN_SIZE: 36,
@@ -228,6 +229,191 @@
         (window.screen && window.screen.height) || 0
     );
     const isPhone = isTouchDevice && screenMin > 0 && screenMin <= 600;
+
+    const _loggedFailureKeys = new Set();
+    function kpLogOnce(key, data) {
+        const fullKey = (location.hostname || '') + '|' + key;
+        if (_loggedFailureKeys.has(fullKey)) return;
+        _loggedFailureKeys.add(fullKey);
+        try {
+            console.warn('[kp-free] ' + key + ' @ ' + location.hostname, data);
+        } catch (e) {}
+    }
+
+    const PLAYER_CONTAINER_STRATEGIES = [
+        {
+            name: 'kinobox_iframe_container',
+            fn: () => document.querySelector('.kinobox_iframe_container')
+        },
+        {
+            name: 'kinobox__iframeWrapper',
+            fn: () => document.querySelector('.kinobox__iframeWrapper')
+        },
+        {
+            name: 'kinobox-iframe-parent',
+            fn: () => {
+                const iframe = document.querySelector('.kinobox iframe, [class*="kinobox"] iframe');
+                return iframe ? iframe.parentElement : null;
+            }
+        },
+        {
+            name: 'generic-iframe-wrapper',
+            fn: () => {
+                const candidates = document.querySelectorAll(
+                    '[class*="iframeWrapper"], [class*="iframe-container"], [class*="iframe_container"], [class*="iframe-container-"], [class*="player-wrapper"], [class*="player-container"]'
+                );
+                for (const el of candidates) {
+                    if (el.classList && el.classList.contains('kp-redirect-embed-group')) continue;
+                    if (el.closest && el.closest('.kp-redirect-embed-group')) continue;
+                    return el;
+                }
+                return null;
+            }
+        },
+        {
+            name: 'player-iframe-parent',
+            fn: () => {
+                const iframe = document.querySelector(
+                    'iframe[src*="theatre"], iframe[src*="player"], iframe[src*="stravers"], iframe[src*="kinobox"], iframe[src*="alloha"], iframe[src*="videocdn"]'
+                );
+                return iframe ? iframe.parentElement : null;
+            }
+        },
+        {
+            name: 'largest-iframe-heuristic',
+            fn: () => {
+                const iframes = Array.from(document.querySelectorAll('iframe'));
+                if (!iframes.length) return null;
+                let best = null;
+                let bestArea = 0;
+                for (const f of iframes) {
+                    const w = f.offsetWidth || 0;
+                    const h = f.offsetHeight || 0;
+                    const area = w * h;
+                    if (area < 40000) continue;
+                    if (f.src && /moviead55|adlook|adlk|deltarockme|myroledance|beebounder|vak345|101partners-stat2/.test(f.src)) continue;
+                    if (area > bestArea) {
+                        bestArea = area;
+                        best = f;
+                    }
+                }
+                return best ? best.parentElement : null;
+            }
+        }
+    ];
+
+    const PLAYER_MENU_STRATEGIES = [
+        {
+            name: 'kinobox_menu',
+            fn: () => ({
+                items: Array.from(document.querySelectorAll('.kinobox_menu li')),
+                activeClass: 'kinobox_menu_active'
+            })
+        },
+        {
+            name: 'kinobox__menuItem',
+            fn: () => ({
+                items: Array.from(document.querySelectorAll('.kinobox__menuItem')),
+                activeClass: 'kinobox__menuItem--active'
+            })
+        },
+        {
+            name: 'kbt_list',
+            fn: () => ({
+                items: Array.from(document.querySelectorAll('.kbt_list li')),
+                activeClass: 'kinobox_menu_active'
+            })
+        },
+        {
+            name: 'kbt_button',
+            fn: () => ({
+                items: Array.from(document.querySelectorAll('.kbt_button li')),
+                activeClass: 'kinobox_menu_active'
+            })
+        },
+        {
+            name: 'li-text-heuristic',
+            fn: () => {
+                const all = Array.from(document.querySelectorAll('li'));
+                const items = all.filter(li => {
+                    const txt = (li.textContent || '').trim();
+                    return /^\d+\s*::\s*\S+/.test(txt) && txt.length < 200;
+                });
+                if (items.length < 1) return { items: [], activeClass: null };
+                return { items, activeClass: null };
+            }
+        },
+        {
+            name: 'list-near-kinobox',
+            fn: (container) => {
+                if (!container) return { items: [], activeClass: null };
+                const root = container.closest('.kinobox, [class*="kinobox"], [class*="player"]') || container.parentElement;
+                if (!root) return { items: [], activeClass: null };
+                const items = Array.from(root.querySelectorAll('li')).filter(li => {
+                    const txt = (li.textContent || '').trim();
+                    return txt.length > 0 && txt.length < 200;
+                });
+                return { items, activeClass: null };
+            }
+        }
+    ];
+
+    function findActiveMenuItem(menuItems, preferredActiveClass) {
+        if (!menuItems || menuItems.length === 0) return null;
+
+        if (preferredActiveClass) {
+            for (const item of menuItems) {
+                if (item.classList && item.classList.contains(preferredActiveClass)) return item;
+            }
+        }
+
+        for (const item of menuItems) {
+            const cls = (typeof item.className === 'string' ? item.className : '') || '';
+            if (/(?:^|[\s_-])(?:active|current|selected|is-active|is-current)(?:[\s_-]|$)/i.test(cls)) {
+                return item;
+            }
+        }
+
+        return null;
+    }
+
+    function getKinoboxElements(type) {
+        const result = {
+            iframeContainer: null,
+            menuItems: [],
+            activeClass: null,
+            activeItem: null,
+            containerStrategy: null,
+            menuStrategy: null
+        };
+
+        for (const s of PLAYER_CONTAINER_STRATEGIES) {
+            try {
+                const el = s.fn();
+                if (el && el.nodeType === 1) {
+                    result.iframeContainer = el;
+                    result.containerStrategy = s.name;
+                    break;
+                }
+            } catch (e) {}
+        }
+
+        for (const s of PLAYER_MENU_STRATEGIES) {
+            try {
+                const r = s.fn(result.iframeContainer);
+                if (r && r.items && r.items.length > 0) {
+                    result.menuItems = r.items;
+                    result.activeClass = r.activeClass || null;
+                    result.menuStrategy = s.name;
+                    break;
+                }
+            } catch (e) {}
+        }
+
+        result.activeItem = findActiveMenuItem(result.menuItems, result.activeClass);
+
+        return result;
+    }
 
     let _darkThemeCache = { value: null, ts: 0 };
     let _movieDataCache = { id: null, data: null, ts: 0 };
@@ -748,9 +934,6 @@
     const isHabster = /(^|\.)habster\./.test(host);
     const isRebuildMirror = matchChannelDomain(host) && !isHabster;
 
-    // ── Убиваем render-blocking CSS на rebuild-зеркалах ──
-    // Эти файлы тормозят отрисовку страницы (белый экран 19с).
-    // Удаляем <link> из DOM как можно раньше, чтобы браузер не блокировал пейнт.
     if (isRebuildMirror) {
         (function killBlockingCss() {
             const re = /\/kinobox\/kinobox\.css(\?|$)|\/modalinst\.css(\?|$)/i;
@@ -760,9 +943,7 @@
                 if (el.tagName !== 'LINK') return;
                 const href = el.getAttribute('href') || '';
                 if (!re.test(href)) return;
-                // Сначала делаем non-render-blocking
                 try { el.setAttribute('media', 'not all'); } catch (e) {}
-                // Потом удаляем из DOM (снимает блокировку пейнта)
                 try { el.remove(); } catch (e) {}
             };
 
@@ -772,32 +953,24 @@
                 try { root.querySelectorAll && root.querySelectorAll('link').forEach(kill); } catch (e) {}
             };
 
-            // На случай, если что-то уже успело появиться до нас
             scan(document);
             scan(document.documentElement);
 
-            // Повторные проходы — страховка от гонки на старте.
-            // Если скрипт запустился ПОЗЖЕ, чем браузер увидел <link>,
-            // MutationObserver уже не поможет — но повторный scan закроет дыру.
             let _scanAttempts = 0;
             const _scanTick = () => {
-                if (_scanAttempts++ > 20) return;      // ~2 секунды суммарно
+                if (_scanAttempts++ > 20) return;
                 scan(document);
                 requestAnimationFrame(_scanTick);
             };
             requestAnimationFrame(_scanTick);
 
-            // Плюс финальная зачистка через DOMContentLoaded — самая надёжная точка
             document.addEventListener('DOMContentLoaded', () => {
                 scan(document);
-                // И ещё раз через 100мс, если что-то доехало позже
                 setTimeout(() => scan(document), 100);
             }, { once: true });
 
-            // И по полной загрузке окна — на всякий случай
             window.addEventListener('load', () => scan(document), { once: true });
 
-            // Ловим всё новое — как только HTML-парсер добавит <link>
             try {
                 new MutationObserver((muts) => {
                     for (const m of muts) {
@@ -1884,28 +2057,11 @@
         if (!document.getElementById('kp-alfa-style')) injectStyleWhenHeadReady('kp-alfa-style', ALFA_STYLES_GAMMA_TANGO);
     }
 
-    function getKinoboxElements(type) {
-        const isTango = type === 'tango';
-        let iframeContainer, menuItems, activeClass;
-        if (isTango) {
-            iframeContainer = document.querySelector('.kinobox__iframeWrapper');
-            menuItems = [...document.querySelectorAll('.kinobox__menuItem')];
-            activeClass = 'kinobox__menuItem--active';
-        } else {
-            iframeContainer = document.querySelector('.kinobox_iframe_container');
-            menuItems = [...document.querySelectorAll('.kinobox_menu li')];
-            activeClass = 'kinobox_menu_active';
-            if (!iframeContainer || menuItems.length === 0) {
-                iframeContainer = document.querySelector('.kinobox__iframeWrapper');
-                menuItems = [...document.querySelectorAll('.kinobox__menuItem')];
-                activeClass = 'kinobox__menuItem--active';
-            }
-        }
-        return { iframeContainer, menuItems, activeClass };
-    }
 
-    function buildKinoboxPage(iframeContainer, menuItems, kpId, movie, activeClass) {
-        if (!iframeContainer || menuItems.length === 0) { showBody(); return; }
+    function buildKinoboxPage(iframeContainer, menuItems, kpId, movie, activeClass, activeItem) {
+        if (!iframeContainer) { showBody(); return; }
+        if (!Array.isArray(menuItems)) menuItems = [];
+
         const container = document.createElement('div');
         container.id = 'kp-alfa-page';
         const posterSrc = `https://kinopoiskapiunofficial.tech/images/posters/kp_small/${kpId}.jpg`;
@@ -1948,36 +2104,48 @@
         iframeContainer.style.paddingTop = '56.25%';
         playerWrap.appendChild(iframeContainer);
 
-        const selectMenu = container.querySelector('#kp-select-menu');
-        const selectLabel = container.querySelector('#kp-select-label');
-        const selectEl = container.querySelector('#kp-select');
-        let activeIndex = -1;
-        menuItems.forEach((origItem, idx) => {
-            const item = document.createElement('div');
-            item.className = 'kp-select-item';
-            const isActive = origItem.classList.contains(activeClass);
-            if (isActive) {
-                item.classList.add('active');
-                activeIndex = idx;
-                selectLabel.textContent = origItem.textContent.replace(/^\d+\s*::\s*/, '').trim();
-            }
-            item.innerHTML = `<span class="kp-select-num">${idx+1}</span><span>${origItem.textContent.replace(/^\d+\s*::\s*/, '').trim()}</span>`;
-            item.addEventListener('click', () => {
-                origItem.click();
-                selectLabel.textContent = origItem.textContent.replace(/^\d+\s*::\s*/, '').trim();
-                selectEl.classList.remove('open');
-                selectMenu.querySelectorAll('.kp-select-item').forEach(el => el.classList.remove('active'));
-                item.classList.add('active');
+        if (menuItems.length === 0) {
+            const topBar = container.querySelector('.player-top-bar');
+            if (topBar) topBar.style.display = 'none';
+        } else {
+            const selectMenu = container.querySelector('#kp-select-menu');
+            const selectLabel = container.querySelector('#kp-select-label');
+            const selectEl = container.querySelector('#kp-select');
+            let activeIndex = -1;
+            menuItems.forEach((origItem, idx) => {
+                const item = document.createElement('div');
+                item.className = 'kp-select-item';
+                const isActive = activeItem
+                    ? origItem === activeItem
+                    : (activeClass && origItem.classList && origItem.classList.contains(activeClass));
+                if (isActive) {
+                    item.classList.add('active');
+                    activeIndex = idx;
+                    selectLabel.textContent = (origItem.textContent || '').replace(/^\d+\s*::\s*/, '').trim();
+                }
+                const label = (origItem.textContent || '').replace(/^\d+\s*::\s*/, '').trim();
+                item.innerHTML = `<span class="kp-select-num">${idx+1}</span><span>${escapeHtml(label)}</span>`;
+                item.addEventListener('click', () => {
+                    try { origItem.click(); } catch (e) {}
+                    selectLabel.textContent = label;
+                    selectEl.classList.remove('open');
+                    selectMenu.querySelectorAll('.kp-select-item').forEach(el => el.classList.remove('active'));
+                    item.classList.add('active');
+                });
+                selectMenu.appendChild(item);
             });
-            selectMenu.appendChild(item);
-        });
-        if (activeIndex === -1 && menuItems.length > 0) {
-            menuItems[0].click();
-            selectLabel.textContent = menuItems[0].textContent.replace(/^\d+\s*::\s*/, '').trim();
-            selectMenu.querySelector('.kp-select-item').classList.add('active');
+            if (activeIndex === -1 && menuItems.length > 0) {
+                const first = menuItems[0];
+                try { first.click(); } catch (e) {}
+                selectLabel.textContent = (first.textContent || '').replace(/^\d+\s*::\s*/, '').trim();
+                const firstItem = selectMenu.querySelector('.kp-select-item');
+                if (firstItem) firstItem.classList.add('active');
+            }
+            const selectTrigger = container.querySelector('#kp-select-trigger');
+            if (selectTrigger) {
+                selectTrigger.addEventListener('click', (e) => { e.stopPropagation(); selectEl.classList.toggle('open'); });
+            }
         }
-        const selectTrigger = container.querySelector('#kp-select-trigger');
-        selectTrigger.addEventListener('click', (e) => { e.stopPropagation(); selectEl.classList.toggle('open'); });
 
         document.body.innerHTML = '';
         preapplySimplifiedClass();
@@ -2013,13 +2181,28 @@
         }
     }
 
-    function rebuildMirror() {
+    function rebuildMirror(preFound) {
         const type = getMirrorTypeForRebuild();
         if (type === 'bravo') { rebuildBravo(); return; }
-        const { iframeContainer, menuItems, activeClass } = getKinoboxElements(type);
+
+        let iframeContainer, menuItems, activeClass, activeItem = null;
+
+        if (preFound) {
+            iframeContainer = preFound.iframeContainer;
+            menuItems = preFound.menuItems || [];
+            activeClass = preFound.activeClass;
+            activeItem = preFound.activeItem || null;
+        } else {
+            const found = getKinoboxElements(type);
+            iframeContainer = found.iframeContainer;
+            menuItems = found.menuItems;
+            activeClass = found.activeClass;
+            activeItem = found.activeItem || null;
+        }
+
         const kpId = document.querySelector('.kinobox[data-kinopoisk]')?.getAttribute('data-kinopoisk') || '0';
         const movie = getMovieInfo();
-        buildKinoboxPage(iframeContainer, menuItems, kpId, movie, activeClass);
+        buildKinoboxPage(iframeContainer, menuItems, kpId, movie, activeClass, activeItem);
     }
 
     function rebuildBravo() {
@@ -2134,29 +2317,129 @@
             }, 5000);
             return;
         }
+
+        let containerFound = null;
+        let menuFound = [];
+        let activeClassFound = null;
+        let activeItemFound = null;
         let attempts = 0;
+
         const maxAttempts = 60;
+        const menuGraceAttempts = 25;
+
         const interval = setInterval(() => {
-            const { iframeContainer, menuItems } = getKinoboxElements(type);
-            if (iframeContainer && menuItems.length > 0) { clearInterval(interval); rebuildMirror(); }
-            else if (++attempts >= maxAttempts) { clearInterval(interval); startPersistentObserver(type); }
+            attempts++;
+
+            let found = null;
+            try { found = getKinoboxElements(type); } catch (e) { found = null; }
+            if (!found) return;
+
+            if (!containerFound && found.iframeContainer) {
+                containerFound = found.iframeContainer;
+            }
+            if (menuFound.length === 0 && found.menuItems && found.menuItems.length > 0) {
+                menuFound = found.menuItems;
+                activeClassFound = found.activeClass;
+                activeItemFound = found.activeItem || null;
+            }
+
+            if (containerFound && (menuFound.length > 0 || attempts >= menuGraceAttempts)) {
+                clearInterval(interval);
+                rebuildMirror({
+                    iframeContainer: containerFound,
+                    menuItems: menuFound,
+                    activeClass: activeClassFound,
+                    activeItem: activeItemFound
+                });
+                return;
+            }
+
+            if (attempts >= maxAttempts) {
+                clearInterval(interval);
+                kpLogOnce('rebuild-timeout', {
+                    type,
+                    containerFound: !!containerFound,
+                    menuCount: menuFound.length,
+                    containerStrategy: found.containerStrategy,
+                    menuStrategy: found.menuStrategy,
+                    candidates: {
+                        iframes: Array.from(document.querySelectorAll('iframe')).slice(0, 8).map(f => ({
+                            src: (f.src || '').slice(0, 120),
+                            className: (typeof f.className === 'string' ? f.className : ''),
+                            size: `${f.offsetWidth || 0}x${f.offsetHeight || 0}`
+                        })),
+                        kinoboxEls: Array.from(document.querySelectorAll('[class*="kinobox"]')).slice(0, 12).map(el => ({
+                            tag: el.tagName,
+                            className: (typeof el.className === 'string' ? el.className : ''),
+                            id: el.id || ''
+                        }))
+                    }
+                });
+                startPersistentObserver(type);
+            }
         }, 200);
     }
 
     function startPersistentObserver(type) {
-        let observer;
+        let observer = null;
         let fallbackTimer = null;
-        const check = () => {
-            const { iframeContainer, menuItems } = getKinoboxElements(type);
-            if (iframeContainer && menuItems.length > 0) {
+        let hasContainer = false;
+        let menuItems = [];
+        let activeClass = null;
+        let activeItem = null;
+        const startedAt = Date.now();
+        let lastCheck = 0;
+        let rebuildDone = false;
+
+        const tryRebuild = () => {
+            if (rebuildDone) return;
+            let found = null;
+            try { found = getKinoboxElements(type); } catch (e) { found = null; }
+            if (!found) return;
+
+            if (!hasContainer && found.iframeContainer) hasContainer = true;
+            if (menuItems.length === 0 && found.menuItems && found.menuItems.length > 0) {
+                menuItems = found.menuItems;
+                activeClass = found.activeClass;
+                activeItem = found.activeItem || null;
+            }
+
+            if (hasContainer && (menuItems.length > 0 || Date.now() - startedAt > 5000)) {
+                rebuildDone = true;
                 if (observer) observer.disconnect();
                 if (fallbackTimer) clearTimeout(fallbackTimer);
-                rebuildMirror();
+                rebuildMirror({
+                    iframeContainer: found.iframeContainer,
+                    menuItems: menuItems,
+                    activeClass: activeClass,
+                    activeItem: activeItem
+                });
             }
         };
-        observer = new MutationObserver(check);
-        observer.observe(document.documentElement, { childList: true, subtree: true });
-        fallbackTimer = setTimeout(() => { observer.disconnect(); showBody(); }, 10000);
+
+        const check = () => {
+            const now = Date.now();
+            if (now - lastCheck < 200) return;
+            lastCheck = now;
+            tryRebuild();
+        };
+
+        try {
+            observer = new MutationObserver(check);
+            observer.observe(document.documentElement, { childList: true, subtree: true });
+        } catch (e) {}
+
+        fallbackTimer = setTimeout(() => {
+            if (observer) observer.disconnect();
+            if (rebuildDone) return;
+            kpLogOnce('persistent-timeout', {
+                type,
+                hasContainer,
+                menuCount: menuItems.length
+            });
+            showBody();
+        }, 15000);
+
         check();
     }
 
